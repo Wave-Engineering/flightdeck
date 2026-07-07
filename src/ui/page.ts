@@ -16,6 +16,7 @@ import { computeEta } from "../eta.ts";
 import { deriveMetrics } from "../metrics.ts";
 import type { Store } from "../store.ts";
 import type { CardModel } from "./card.ts";
+import { buildConcernQueue, renderConcernQueue } from "./concern_queue.ts";
 import { DEFAULT_LAYOUT, type Lane, laneFor, renderGrid } from "./grid.ts";
 import { escapeHtml } from "./format.ts";
 import { renderTable } from "./table.ts";
@@ -60,6 +61,8 @@ function renderLane(lane: Lane, models: CardModel[]): string {
 export function renderBoard(store: Store): string {
   const models = buildCardModels(store);
   if (models.length === 0) return `<div class="fd-empty">no activities</div>`;
+  // Global concern queue (centerpiece) folds concerns across ALL activities.
+  const concerns = renderConcernQueue(buildConcernQueue(models.map((m) => m.view)));
   const byLane = new Map<Lane, CardModel[]>();
   for (const m of models) {
     const lane = laneFor(m.view);
@@ -67,7 +70,8 @@ export function renderBoard(store: Store): string {
     if (arr) arr.push(m);
     else byLane.set(lane, [m]);
   }
-  return LANE_ORDER.map((lane) => renderLane(lane, byLane.get(lane) ?? [])).join("");
+  const lanes = LANE_ORDER.map((lane) => renderLane(lane, byLane.get(lane) ?? [])).join("");
+  return concerns + lanes;
 }
 
 const STYLES = `
