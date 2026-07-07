@@ -1,0 +1,13 @@
+node_modules/
+*.log
+
+# Runtime data (event log + SQLite materialized view) — never committed
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+
+# Bun
+.bun/
+bun.lockb.tmp
