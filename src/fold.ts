@@ -202,7 +202,7 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
     }
   }
 
-  // Startedmay be absent if no activity_start event was seen — fall back to first ts.
+  // Started may be absent if no activity_start event was seen — fall back to first ts.
   if (v.startedAt === null) v.startedAt = first.ts;
 
   // Status is derived HERE — the single code path that computes "closed".
