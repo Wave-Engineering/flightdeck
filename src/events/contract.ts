@@ -112,23 +112,38 @@ export class EventValidationError extends Error {
   override name = "EventValidationError";
 }
 
-// Optional scope keys and their allowed JS types (null/absent always allowed).
-const SCOPE_TYPES: Record<string, ReadonlyArray<"string" | "number">> = {
-  phase: ["string"],
-  wave: ["string"],
-  flight: ["string", "number"],
-  agent: ["string"],
-  logRef: ["string"],
-};
+// Properties the schema types as `["string", "null"]` — a string when present,
+// else null/absent. `flight` (string|integer) and `schemaVersion` (integer) are
+// numeric and handled separately below.
+const STRING_OR_NULL_KEYS = [
+  "phase",
+  "wave",
+  "agent",
+  "logRef",
+  "action",
+  "label",
+  "metric",
+  "unit",
+] as const;
 
 const EVENT_KIND_SET: ReadonlySet<string> = new Set(EVENT_KINDS);
 const CONCERN_KIND_SET: ReadonlySet<string> = new Set(CONCERN_KINDS);
 const CONCERN_SOURCE_SET: ReadonlySet<string> = new Set(CONCERN_SOURCES);
 
 /**
- * Validate `event` against the contract; throws {@link EventValidationError} on
- * violation. Mirrors the Python `validate_event` check order exactly:
- * dict → kind → activityId → ts → scope-tag types → concern fields → metric name.
+ * Validate `event` against the vendored contract (`schema.json`); throws
+ * {@link EventValidationError} on any violation. This enforces exactly what the
+ * schema does, so the validator rejects every shape the schema rejects:
+ *   • required fields + types: `kind` ∈ enum, non-empty `activityId`/`ts`;
+ *   • `schemaVersion` an integer ≥ 1 when present;
+ *   • `flight` a string OR an integer (never a float) when present;
+ *   • the `["string","null"]`-typed tags (phase/wave/agent/logRef/action/
+ *     label/metric/unit) a string when present;
+ *   • `concernKind`/`source` constrained to their enums WHENEVER present on ANY
+ *     event (schema `$ref`), independent of `kind`;
+ *   • kind-conditional requirements (schema `allOf`): concern ⇒ concernKind +
+ *     source present; metric ⇒ non-empty metric name.
+ * `contract.test.ts` pins these structural rules so validator ⇄ schema never drift.
  */
 export function validateEvent(event: unknown): asserts event is FlightDeckEvent {
   if (typeof event !== "object" || event === null || Array.isArray(event)) {
@@ -155,28 +170,69 @@ export function validateEvent(event: unknown): asserts event is FlightDeckEvent 
     throw new EventValidationError("event 'ts' must be a non-empty string");
   }
 
-  for (const [key, allowed] of Object.entries(SCOPE_TYPES)) {
-    const v = e[key];
-    if (key in e && v !== null && v !== undefined) {
-      if (!allowed.includes(typeof v as "string" | "number")) {
-        throw new EventValidationError(
-          `scope tag '${key}' must be ${allowed.join("/")} or absent`,
-        );
-      }
+  // schemaVersion: integer >= 1 when present (schema: {type:integer, minimum:1}).
+  const schemaVersion = e["schemaVersion"];
+  if (schemaVersion !== undefined) {
+    if (
+      typeof schemaVersion !== "number" ||
+      !Number.isInteger(schemaVersion) ||
+      schemaVersion < 1
+    ) {
+      throw new EventValidationError(
+        `'schemaVersion' must be an integer >= 1, got ${JSON.stringify(schemaVersion)}`,
+      );
     }
   }
 
-  if (kind === "concern") {
-    const ck = e["concernKind"];
-    if (typeof ck !== "string" || !CONCERN_KIND_SET.has(ck)) {
+  // ["string","null"]-typed properties: a string when present, else null/absent.
+  for (const key of STRING_OR_NULL_KEYS) {
+    const v = e[key];
+    if (v !== undefined && v !== null && typeof v !== "string") {
+      throw new EventValidationError(`'${key}' must be a string or null/absent`);
+    }
+  }
+
+  // flight: a string OR an integer (never a float) when present
+  // (schema: {type:["string","integer","null"]}).
+  const flight = e["flight"];
+  if (flight !== undefined && flight !== null) {
+    const ok = typeof flight === "string" || (typeof flight === "number" && Number.isInteger(flight));
+    if (!ok) {
       throw new EventValidationError(
-        `concern 'concernKind' must be one of ${CONCERN_KINDS.join(", ")}, got ${JSON.stringify(ck)}`,
+        `scope tag 'flight' must be a string or integer, got ${JSON.stringify(flight)}`,
       );
     }
-    const src = e["source"];
-    if (typeof src !== "string" || !CONCERN_SOURCE_SET.has(src)) {
+  }
+
+  // concernKind / source: constrained to their enums WHENEVER present on ANY event
+  // (schema $ref), independent of kind. (null is not a valid enum member.)
+  const concernKind = e["concernKind"];
+  if (concernKind !== undefined) {
+    if (typeof concernKind !== "string" || !CONCERN_KIND_SET.has(concernKind)) {
       throw new EventValidationError(
-        `concern 'source' must be one of ${CONCERN_SOURCES.join(", ")}, got ${JSON.stringify(src)}`,
+        `'concernKind' must be one of ${CONCERN_KINDS.join(", ")}, got ${JSON.stringify(concernKind)}`,
+      );
+    }
+  }
+  const source = e["source"];
+  if (source !== undefined) {
+    if (typeof source !== "string" || !CONCERN_SOURCE_SET.has(source)) {
+      throw new EventValidationError(
+        `'source' must be one of ${CONCERN_SOURCES.join(", ")}, got ${JSON.stringify(source)}`,
+      );
+    }
+  }
+
+  // Kind-conditional requirements (schema allOf).
+  if (kind === "concern") {
+    if (typeof concernKind !== "string") {
+      throw new EventValidationError(
+        `concern event requires 'concernKind' (one of ${CONCERN_KINDS.join(", ")})`,
+      );
+    }
+    if (typeof source !== "string") {
+      throw new EventValidationError(
+        `concern event requires 'source' (one of ${CONCERN_SOURCES.join(", ")})`,
       );
     }
   }
