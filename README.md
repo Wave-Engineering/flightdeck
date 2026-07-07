@@ -9,7 +9,7 @@ Every deterministic state change in the wave-pattern pipeline emits one typed, s
 The Bun/TS service:
 
 - **Authenticated ingest** (`POST /ingest`) — shared bearer token (F-6); validates each event against the vendored event contract; appends to the append-only log.
-- **Event-sourced store** — the JSONL event log is the single source of truth; a `bun:sqlite` table is a rebuildable materialized view. One pure `fold()` computes all derived state; `rebuild()` re-folds the whole log (rebuild ≡ live).
+- **Event-sourced store** — the JSONL event log is the single source of truth; a `bun:sqlite` table is a rebuildable materialized view. One pure `fold()` computes all derived state; `rebuild()` re-folds the whole log (rebuild ≡ live). The view is never trusted across a restart: a lost/empty **or** SQLite-corrupt view file is discarded on boot and rebuilt from the log.
 - **Metrics + split-ETA** — wall / idle / ci-wait / collision / confidence / drift derived from event timestamps; ETA is split into machine-time vs blocked-on-you (campaign burn-down / float cord-band). The token metric is an honest `null` stub until #853 lands.
 
 ### The event contract

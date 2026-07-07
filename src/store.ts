@@ -8,10 +8,13 @@
 // The view is a pure, rebuildable projection of the log. `append()` (live) and
 // `rebuild()` (drop + re-fold the whole log) BOTH derive state through the single
 // `foldActivity`, so `rebuild()` reproduces the live view exactly (R-09, IT-05).
-// If the view is ever lost or corrupted, it is thrown away and rebuilt from the
-// log — the log never depends on the view.
+// If the view is ever lost OR corrupted, it is thrown away and rebuilt from the
+// log — the log never depends on the view. Boot proves this both ways: a lost/empty
+// view is re-folded from scratch, and a SQLite-corrupt view file is detected at open
+// (`openViewDb`), unlinked, and recreated before the whole log is re-folded into it.
 
 import { Database, type Statement } from "bun:sqlite";
+import { rmSync } from "node:fs";
 
 import type { FlightDeckEvent } from "./events/contract.ts";
 import { type ActivityView, fold, foldActivity } from "./fold.ts";
@@ -63,21 +66,55 @@ ON CONFLICT(activityId) DO UPDATE SET
   openConcerns = excluded.openConcerns,
   view_json    = excluded.view_json`;
 
+/**
+ * Open the materialized-view db at `dbPath`, tolerating a lost OR corrupt file.
+ * The view is a pure, rebuildable projection of the log (never trusted across a
+ * restart), so if an existing file can't be opened/read (corrupt/unreadable) we
+ * discard it and hand back a fresh, empty db — the caller then re-folds the whole
+ * log into it. `:memory:` has no file to salvage, so it is opened directly.
+ *
+ * `new Database()` is lazy: a corrupt or non-database file opens without error and
+ * only fails when SQLite first reads a page. We force that read here (probe the
+ * schema) so corruption surfaces at boot, where we can recover, instead of leaking
+ * out later as a mid-flight crash.
+ */
+function openViewDb(dbPath: string): Database {
+  if (dbPath === ":memory:") return new Database(dbPath);
+  let db: Database | null = null;
+  try {
+    db = new Database(dbPath);
+    db.query("SELECT count(*) FROM sqlite_master").get(); // force a page read
+    return db;
+  } catch {
+    // Corrupt/unreadable view → throw the bad file away and recreate it empty.
+    if (db) {
+      try {
+        db.close();
+      } catch {
+        /* the handle is already broken; nothing to salvage */
+      }
+    }
+    rmSync(dbPath, { force: true });
+    return new Database(dbPath);
+  }
+}
+
 export class Store implements IngestSink {
   readonly log: EventLog;
   private readonly db: Database;
   private readonly upsertStmt: Statement;
-  private events: FlightDeckEvent[];
+  private events: FlightDeckEvent[] = [];
 
   constructor(opts: StoreOptions) {
     this.log = opts.log;
-    this.db = new Database(opts.dbPath ?? ":memory:");
+    // Open defensively: a lost/empty OR SQLite-corrupt view file is discarded and
+    // recreated here, so the rebuild below always folds into a sound, empty db.
+    this.db = openViewDb(opts.dbPath ?? ":memory:");
     this.db.run(CREATE_TABLE);
     this.upsertStmt = this.db.query(UPSERT);
-    // Hydrate the in-memory event list from the log (source of truth) and build
+    // Hydrate the in-memory event list from the log (source of truth) and rebuild
     // the view from scratch — the view is never trusted across a restart.
-    this.events = this.log.readAll();
-    this.rebuildFromEvents();
+    this.rebuild();
   }
 
   /** Persist an event (log first), then update just its activity's view row. */

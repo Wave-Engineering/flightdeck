@@ -3,12 +3,13 @@
 // log, and the result is byte-identical to the live view.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { FlightDeckEvent } from "../src/events/contract.ts";
-import { fold } from "../src/fold.ts";
+import { type ActivityView, fold } from "../src/fold.ts";
 import { EventLog } from "../src/log.ts";
 import { Store } from "../src/store.ts";
 
@@ -98,6 +99,61 @@ describe("derived state through the view", () => {
     expect(store.getActivity("camp-1")?.openConcerns).toBe(1);
     // honest token stub survived the round-trip through SQLite
     expect(store.getActivity("camp-1")?.metrics["tokens"]).toEqual({ value: null, unit: null, ts: "t08" });
+    store.close();
+  });
+});
+
+describe("corrupt view self-heals from the log (file-backed, I1)", () => {
+  // Populate the append-only log (source of truth) with the mixed stream, and
+  // return the view a clean rebuild from that log should produce.
+  function seedLogAndExpected(): ActivityView[] {
+    const log = new EventLog(logPath);
+    for (const e of stream) log.append(e);
+    const clean = new Store({ log: new EventLog(logPath), dbPath: ":memory:" });
+    const expected = clean.getView();
+    clean.close();
+    return expected;
+  }
+
+  test("a SQLite-corrupt db file is discarded and rebuilt from the log on boot", () => {
+    const expected = seedLogAndExpected();
+
+    // Corrupt the on-disk view: SQLite magic header then garbage → the file opens
+    // (open is lazy) but fails on first page read ("file is not a database").
+    const dbPath = join(dir, "view.db");
+    const garbage = Buffer.alloc(4096);
+    garbage.write("SQLite format 3\0", 0, "latin1");
+    for (let i = 16; i < garbage.length; i++) garbage[i] = (i * 37) & 0xff;
+    writeFileSync(dbPath, garbage);
+
+    // Booting a Store on the corrupt file must NOT throw: it unlinks the bad file
+    // and re-folds the whole log into a fresh db, recovering the correct view.
+    const store = new Store({ log: new EventLog(logPath), dbPath });
+    expect(store.getView()).toEqual(expected);
+    store.close();
+
+    // The bad bytes were truly replaced: the file is now a sound SQLite db that
+    // opens without recovery (a raw read of sqlite_master no longer throws).
+    const check = new Database(dbPath);
+    expect(() => check.query("SELECT count(*) FROM sqlite_master").get()).not.toThrow();
+    check.close();
+  });
+
+  test("pure-garbage (non-database) view file also self-heals", () => {
+    const expected = seedLogAndExpected();
+    const dbPath = join(dir, "view2.db");
+    writeFileSync(dbPath, "not a sqlite database — total garbage\x00\x01\x02".repeat(64));
+
+    const store = new Store({ log: new EventLog(logPath), dbPath });
+    expect(store.getView()).toEqual(expected);
+    store.close();
+  });
+
+  test("a lost/empty (never-created) view file rebuilds from the log", () => {
+    const expected = seedLogAndExpected();
+    const dbPath = join(dir, "fresh.db"); // does not exist yet
+    const store = new Store({ log: new EventLog(logPath), dbPath });
+    expect(store.getView()).toEqual(expected);
     store.close();
   });
 });
