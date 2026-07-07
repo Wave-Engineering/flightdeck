@@ -30,6 +30,17 @@ Run the service (needs a token; ingest fails closed without one):
 FLIGHTDECK_INGEST_TOKEN=… FLIGHTDECK_LOG_PATH=data/events.jsonl PORT=8080 bun run src/server.ts
 ```
 
-## Not in this repo / this phase
+## Deploy (operator's step)
 
-Deploy is the **operator's** step (ABSOLUTE prod rule / NG-1): no Dockerfile, Swarm stack, or compose lives here yet — those are Phase 5 deliverables the operator applies. This service only listens and folds.
+Deploy is the **operator's** step (ABSOLUTE prod rule / NG-1): this repo ships the
+deliverables, it never deploys. The Phase 5 (Wave 5.2) artifacts:
+
+- `Dockerfile` + `docker-entrypoint.sh` — non-root Bun image; event log + SQLite
+  view on a persistent `/data` volume. Build only: `docker build .`.
+- `.github/workflows/release.yml` — on a `v*` tag / release, builds + pushes
+  `ghcr.io/wave-engineering/flightdeck` to GHCR (defined, not triggered).
+- `deploy/flightdeck.stack.yml` + `config/flightdeck.env.example` + `deploy/README.md`
+  — the Swarm stack, the documented env knobs, and the operator runbook (with a
+  **SEAMS** table: image tag, ingress, ingest-token secret, Discord config, volume).
+
+See [`deploy/README.md`](deploy/README.md). This service still only listens and folds.

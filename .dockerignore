@@ -1,0 +1,21 @@
+# Keep the Docker build context lean and deterministic. node_modules is rebuilt
+# inside the deps stage from bun.lock; runtime data + VCS never belong in an image.
+node_modules/
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.log
+
+.git/
+.github/
+.gitignore
+
+# Deploy deliverables + docs are for the operator, not the image.
+deploy/
+config/
+README.md
+
+# Tests aren't shipped in the runtime image.
+tests/
