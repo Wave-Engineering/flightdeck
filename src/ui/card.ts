@@ -14,6 +14,7 @@
 import type { ActivityMetrics } from "../metrics.ts";
 import type { EtaResult } from "../eta.ts";
 import type { ActivityStatus, ActivityType, ActivityView } from "../fold.ts";
+import { renderEtaStrip } from "./eta_strip.ts";
 import { escapeHtml, formatDuration, formatMetricValue } from "./format.ts";
 
 /** Everything a card needs, assembled from the store's fold + derivations. */
@@ -43,23 +44,6 @@ function progress(view: ActivityView): { done: number; total: number | null } {
   return view.activityType === "campaign"
     ? { done: view.completed, total: view.planTotal }
     : { done: view.legs, total: view.cord };
-}
-
-/**
- * The split ETA as two structurally independent figures — machine-time and the
- * blocked-on-you counter. Rendered inline in the vitals row here; the dedicated
- * headline strip (S3.4 / eta_strip.ts) reuses the same two-figure shape.
- */
-function renderEtaCompact(eta: EtaResult): string {
-  return (
-    `<span class="fd-eta" data-eta-kind="${escapeHtml(eta.kind)}">` +
-    `<span class="fd-eta-machine" title="machine-time remaining">⚙ ${escapeHtml(
-      formatDuration(eta.machineTimeRemainingMs),
-    )}</span>` +
-    `<span class="fd-eta-blocked" data-blocked-ms="${eta.blockedOnYouMs}" title="blocked on you">` +
-    `⏳ ${escapeHtml(formatDuration(eta.blockedOnYouMs))}</span>` +
-    `</span>`
-  );
 }
 
 function metricCell(label: string, value: string): string {
@@ -121,11 +105,13 @@ export function renderCard(model: CardModel, opts?: { expanded?: boolean }): str
     `<span class="fd-progress" data-estimator="${escapeHtml(label)}">${done} / ${escapeHtml(
       totalText,
     )} <span class="fd-estimator-label">${escapeHtml(label)}</span></span>` +
-    renderEtaCompact(eta) +
+    renderEtaStrip(eta, { variant: "inline" }) +
     concernChip +
     `</div>` +
-    // full metrics grid — always in the DOM; CSS reveals it only when expanded
-    // (data-expanded), so expand/collapse is pure client-side, no server round-trip.
+    // expanded body: the split-ETA headline strip + the full metrics grid. Always in
+    // the DOM; CSS reveals it only when expanded, so expand/collapse is pure
+    // client-side (no server round-trip).
+    renderEtaStrip(eta, { variant: "headline" }) +
     renderMetricsGrid(model) +
     `</article>`
   );

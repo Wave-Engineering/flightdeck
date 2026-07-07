@@ -100,7 +100,8 @@ main { padding: 16px; }
 .fd-chip { font-size: 11px; padding: 1px 7px; border-radius: 999px; }
 .fd-chip-concern { color: #dc2626; border: 1px solid #dc2626; }
 .fd-metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
-.fd-card[data-expanded="false"] .fd-metrics-grid { display: none; }
+.fd-card[data-expanded="false"] .fd-metrics-grid,
+.fd-card[data-expanded="false"] .fd-eta-strip { display: none; }
 .fd-metric { display: flex; flex-direction: column; }
 .fd-metric-label { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; opacity: .55; }
 .fd-metric-value { font-variant-numeric: tabular-nums; }
@@ -191,7 +192,7 @@ const CLIENT_SCRIPT = `
   // Live blocked-on-you tick: cards currently blocked accrue wall time since load.
   var loadedAt = Date.now();
   setInterval(function () {
-    var els = board.querySelectorAll('.fd-card[data-status="blocked"] .fd-eta-blocked');
+    var els = board.querySelectorAll('.fd-card[data-status="blocked"] .fd-eta .fd-eta-blocked');
     for (var i = 0; i < els.length; i++) {
       var base = parseInt(els[i].getAttribute('data-blocked-ms') || '0', 10);
       var live = base + (Date.now() - loadedAt);
