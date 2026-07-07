@@ -13,9 +13,12 @@
 // Responses: 401 (missing/invalid token), 400 (malformed JSON or schema-invalid),
 // 202 (accepted + persisted), 405 (wrong method), 404 (unknown path).
 
+import type { FlightDeckEvent } from "./events/contract.ts";
 import { EventValidationError, validateEvent } from "./events/contract.ts";
 import { EventLog, type IngestSink } from "./log.ts";
 import { Store } from "./store.ts";
+import { parseScope } from "./ui/log_viewer.ts";
+import { renderLogPage, renderPage, UiHub } from "./ui/page.ts";
 
 export interface ServerConfig {
   port: number;
@@ -24,6 +27,13 @@ export interface ServerConfig {
   token: string;
   /** Where valid events are appended (log or store). */
   sink: IngestSink;
+  /**
+   * Optional UI hub. When present, `GET /` serves the console page and `GET /events`
+   * is the SSE live-push stream. Absent ⇒ ingest-only service (P2 behaviour).
+   */
+  ui?: UiHub;
+  /** Called after a valid event is appended — the SSE broadcast hook (R-11). */
+  onEvent?: (event: FlightDeckEvent) => void;
 }
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" } as const;
@@ -69,6 +79,43 @@ export async function handleRequest(req: Request, cfg: ServerConfig): Promise<Re
     return json({ ok: true }, 200);
   }
 
+  // --- UI routes (only when a UiHub is configured) -----------------------
+  if (cfg.ui) {
+    if (url.pathname === "/" || url.pathname === "/index.html") {
+      if (req.method !== "GET") return json({ error: "method not allowed" }, 405);
+      return new Response(renderPage(cfg.ui.store), {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    }
+    if (url.pathname === "/log") {
+      if (req.method !== "GET") return json({ error: "method not allowed" }, 405);
+      // Scoped transcript — the concern-queue scope-link target (R-15). `logRef` is
+      // carried alongside the scope tags (parseScope omits it) and pins/highlights the
+      // exact referenced event within the scoped transcript.
+      return new Response(
+        renderLogPage(cfg.ui.store, parseScope(url.searchParams), url.searchParams.get("logRef")),
+        { headers: { "content-type": "text/html; charset=utf-8" } },
+      );
+    }
+    if (url.pathname === "/events") {
+      if (req.method !== "GET") return json({ error: "method not allowed" }, 405);
+      // SSE: register a writer with the hub (it flushes a snapshot immediately),
+      // and unregister on client abort. Live board frames arrive via onEvent →
+      // hub.broadcast(). Prior art: cc scripts/wave-watcher/server.ts.
+      const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+      const writer = writable.getWriter();
+      cfg.ui.addClient(writer);
+      req.signal.addEventListener("abort", () => cfg.ui?.removeClient(writer));
+      return new Response(readable, {
+        headers: {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+          connection: "keep-alive",
+        },
+      });
+    }
+  }
+
   if (url.pathname === "/ingest") {
     if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
 
@@ -96,6 +143,8 @@ export async function handleRequest(req: Request, cfg: ServerConfig): Promise<Re
 
     // Persist to the append-only log (R-08). validateEvent asserted the type.
     cfg.sink.append(body);
+    // Notify the SSE broadcast hook so connected consoles update live (R-11).
+    cfg.onEvent?.(body);
     return json({ ok: true, accepted: true }, 202);
   }
 
@@ -128,7 +177,10 @@ if (import.meta.main) {
   // Store = append-only log (source of truth) + SQLite materialized view; the view
   // is rebuilt from the log on boot, so a lost/corrupt db self-heals (R-09).
   const sink = new Store({ log: new EventLog(logPath), dbPath });
-  const server = createServer({ port, token, sink });
+  // UI hub renders the console from the store and live-pushes over SSE; onEvent
+  // broadcasts a fresh board after every ingest (R-11).
+  const ui = new UiHub(sink);
+  const server = createServer({ port, token, sink, ui, onEvent: () => ui.broadcast() });
   console.error(
     `[flightdeck] listening on http://${server.hostname}:${server.port} (log: ${logPath}, view: ${dbPath})`,
   );
