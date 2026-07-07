@@ -15,6 +15,7 @@
 import { computeEta } from "../eta.ts";
 import { deriveMetrics } from "../metrics.ts";
 import type { Store } from "../store.ts";
+import { resolveStaleMs, stalenessPredicate } from "../watcher.ts";
 import type { CardModel } from "./card.ts";
 import { buildConcernQueue, renderConcernQueue } from "./concern_queue.ts";
 import { DEFAULT_LAYOUT, type Lane, laneFor, renderGrid } from "./grid.ts";
@@ -33,7 +34,16 @@ export function buildCardModels(store: Store): CardModel[] {
   });
 }
 
-const LANE_ORDER: Lane[] = ["active", "closed"];
+const LANE_ORDER: Lane[] = ["active", "idle", "closed"];
+
+/** Wall-clock inputs for the staleness watcher (S4.1). Injected in tests for a
+ *  deterministic clock; the live UI defaults to the real clock + env threshold. */
+export interface StalenessOpts {
+  /** Epoch ms "now" the watcher compares against. Default: `Date.now()`. */
+  now?: number;
+  /** Staleness threshold (ms). Default: `resolveStaleMs()` (env / 15 min). */
+  staleMs?: number;
+}
 
 /**
  * One lane: heading + independent card/table toggle. BOTH representations are in the
@@ -56,17 +66,25 @@ function renderLane(lane: Lane, models: CardModel[]): string {
 
 /**
  * The swappable board fragment (inner HTML of `#board`). Activities are grouped into
- * lanes (Active → cards, Closed/Idle → table by default), each independently toggled.
- * Later stories fold in the global concern queue and the split-ETA headline strip.
+ * lanes (Active → cards, Idle/Closed → table by default), each independently toggled.
+ * The P4 staleness watcher supplies the wall-clock "stale" signal used both to light
+ * the Idle lane AND to sort stalled-with-open-concerns to the top of the global queue
+ * (R-21/R-22) — one predicate, injected here, so the pure fold stays clock-free.
  */
-export function renderBoard(store: Store): string {
+export function renderBoard(store: Store, opts?: StalenessOpts): string {
   const models = buildCardModels(store);
   if (models.length === 0) return `<div class="fd-empty">no activities</div>`;
-  // Global concern queue (centerpiece) folds concerns across ALL activities.
-  const concerns = renderConcernQueue(buildConcernQueue(models.map((m) => m.view)));
+  const now = opts?.now ?? Date.now();
+  const staleMs = opts?.staleMs ?? resolveStaleMs();
+  const isStalled = stalenessPredicate(now, staleMs);
+  // Global concern queue (centerpiece) folds concerns across ALL activities; the P4
+  // predicate replaces the queue's default (blocked) with real wall-clock staleness.
+  const concerns = renderConcernQueue(
+    buildConcernQueue(models.map((m) => m.view), { isStalled }),
+  );
   const byLane = new Map<Lane, CardModel[]>();
   for (const m of models) {
-    const lane = laneFor(m.view);
+    const lane = laneFor(m.view, { stale: isStalled(m.view) });
     const arr = byLane.get(lane);
     if (arr) arr.push(m);
     else byLane.set(lane, [m]);
@@ -110,6 +128,9 @@ main { padding: 16px; }
 .fd-lane { margin-bottom: 20px; }
 .fd-lane-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .fd-lane-head h2 { font-size: 13px; margin: 0; text-transform: uppercase; letter-spacing: .05em; opacity: .7; }
+/* Idle lane (P4 stale-but-open) reads distinct from Active/Closed — amber, like blocked. */
+.fd-lane[data-lane="idle"] .fd-lane-head h2 { color: #d9822b; opacity: .9; }
+.fd-lane[data-lane="idle"] .fd-lane-count { color: #d9822b; }
 .fd-lane-toggle { font-size: 11px; cursor: pointer; background: none; border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; color: inherit; }
 .fd-lane[data-layout="cards"] .fd-lane-table { display: none; }
 .fd-lane[data-layout="table"] .fd-lane-cards { display: none; }
