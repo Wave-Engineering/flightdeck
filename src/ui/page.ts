@@ -16,7 +16,9 @@ import { computeEta } from "../eta.ts";
 import { deriveMetrics } from "../metrics.ts";
 import type { Store } from "../store.ts";
 import type { CardModel } from "./card.ts";
-import { renderGrid } from "./grid.ts";
+import { DEFAULT_LAYOUT, type Lane, laneFor, renderGrid } from "./grid.ts";
+import { escapeHtml } from "./format.ts";
+import { renderTable } from "./table.ts";
 
 /** Build a CardModel per activity: folded view + its derived metrics + split ETA. */
 export function buildCardModels(store: Store): CardModel[] {
@@ -29,14 +31,43 @@ export function buildCardModels(store: Store): CardModel[] {
   });
 }
 
+const LANE_ORDER: Lane[] = ["active", "closed"];
+
 /**
- * The swappable board fragment (inner HTML of `#board`). S3.1: a single card grid
- * (the default multi-activity view). Later stories fold in per-lane table toggle,
- * the global concern queue, and the split-ETA headline.
+ * One lane: heading + independent card/table toggle. BOTH representations are in the
+ * DOM; CSS keyed on `data-layout` shows exactly one, so the toggle is pure client-side
+ * (R-13). `data-layout` starts at the lane's default (Active → cards, Closed → table).
+ */
+function renderLane(lane: Lane, models: CardModel[]): string {
+  if (models.length === 0) return "";
+  return (
+    `<section class="fd-lane" data-lane="${lane}" data-layout="${DEFAULT_LAYOUT[lane]}">` +
+    `<div class="fd-lane-head"><h2>${escapeHtml(lane)}</h2>` +
+    `<span class="fd-lane-count">${models.length}</span>` +
+    `<button class="fd-lane-toggle" data-action="toggle-layout" data-lane="${lane}">cards ⇄ table</button>` +
+    `</div>` +
+    `<div class="fd-lane-cards">${renderGrid(models)}</div>` +
+    `<div class="fd-lane-table">${renderTable(models)}</div>` +
+    `</section>`
+  );
+}
+
+/**
+ * The swappable board fragment (inner HTML of `#board`). Activities are grouped into
+ * lanes (Active → cards, Closed/Idle → table by default), each independently toggled.
+ * Later stories fold in the global concern queue and the split-ETA headline strip.
  */
 export function renderBoard(store: Store): string {
   const models = buildCardModels(store);
-  return renderGrid(models);
+  if (models.length === 0) return `<div class="fd-empty">no activities</div>`;
+  const byLane = new Map<Lane, CardModel[]>();
+  for (const m of models) {
+    const lane = laneFor(m.view);
+    const arr = byLane.get(lane);
+    if (arr) arr.push(m);
+    else byLane.set(lane, [m]);
+  }
+  return LANE_ORDER.map((lane) => renderLane(lane, byLane.get(lane) ?? [])).join("");
 }
 
 const STYLES = `
