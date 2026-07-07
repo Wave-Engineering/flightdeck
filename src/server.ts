@@ -17,7 +17,8 @@ import type { FlightDeckEvent } from "./events/contract.ts";
 import { EventValidationError, validateEvent } from "./events/contract.ts";
 import { EventLog, type IngestSink } from "./log.ts";
 import { Store } from "./store.ts";
-import { renderPage, UiHub } from "./ui/page.ts";
+import { parseScope } from "./ui/log_viewer.ts";
+import { renderLogPage, renderPage, UiHub } from "./ui/page.ts";
 
 export interface ServerConfig {
   port: number;
@@ -83,6 +84,13 @@ export async function handleRequest(req: Request, cfg: ServerConfig): Promise<Re
     if (url.pathname === "/" || url.pathname === "/index.html") {
       if (req.method !== "GET") return json({ error: "method not allowed" }, 405);
       return new Response(renderPage(cfg.ui.store), {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    }
+    if (url.pathname === "/log") {
+      if (req.method !== "GET") return json({ error: "method not allowed" }, 405);
+      // Scoped transcript — the concern-queue scope-link target (R-15).
+      return new Response(renderLogPage(cfg.ui.store, parseScope(url.searchParams)), {
         headers: { "content-type": "text/html; charset=utf-8" },
       });
     }

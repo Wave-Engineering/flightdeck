@@ -19,6 +19,7 @@ import type { CardModel } from "./card.ts";
 import { buildConcernQueue, renderConcernQueue } from "./concern_queue.ts";
 import { DEFAULT_LAYOUT, type Lane, laneFor, renderGrid } from "./grid.ts";
 import { escapeHtml } from "./format.ts";
+import { type LogScope, renderLogViewer } from "./log_viewer.ts";
 import { renderTable } from "./table.ts";
 
 /** Build a CardModel per activity: folded view + its derived metrics + split ETA. */
@@ -229,6 +230,19 @@ export function renderPage(store: Store): string {
     `<div class="fd-topbar"><h1>FlightDeck</h1><span class="fd-live">● live</span></div>` +
     `<main id="board">${renderBoard(store)}</main>` +
     `<script>${CLIENT_SCRIPT}</script>` +
+    `</body></html>`
+  );
+}
+
+/** The scoped log-viewer page served at `/log` (concern-queue click-through target). */
+export function renderLogPage(store: Store, scope: LogScope): string {
+  const viewer = renderLogViewer(store.allEvents(), scope);
+  return (
+    `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+    `<meta name="viewport" content="width=device-width, initial-scale=1">` +
+    `<title>FlightDeck — log</title><style>${STYLES}</style></head><body>` +
+    `<div class="fd-topbar"><h1>FlightDeck</h1><a class="fd-scope-link" href="/">← board</a></div>` +
+    `<main>${viewer}</main>` +
     `</body></html>`
   );
 }
