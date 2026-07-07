@@ -24,7 +24,7 @@ for var in FLIGHTDECK_INGEST_TOKEN FLIGHTDECK_DISCORD_TOKEN; do
   fi
   eval "current=\${${var}:-}"
   if [ -z "$current" ]; then
-    # Read the file and strip a single trailing newline.
+    # Read the file, stripping trailing newline(s) (command substitution does this).
     value="$(cat "$file_path")"
     export "${var}=${value}"
   fi

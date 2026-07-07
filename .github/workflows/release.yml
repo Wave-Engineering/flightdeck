@@ -9,10 +9,10 @@ on:
   release:
     types: [published]
 
-# GITHUB_TOKEN needs packages:write to push to ghcr.io; contents:read to check out.
+# Least-privilege default: read-only, inherited by the test job (which never pushes).
+# The publish job grants itself packages:write to push to ghcr.io.
 permissions:
   contents: read
-  packages: write
 
 env:
   # GHCR path must be lowercase (org "Wave-Engineering" -> wave-engineering).
