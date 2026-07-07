@@ -8,18 +8,28 @@
 import type { ActivityView } from "../fold.ts";
 import { type CardModel, renderCard } from "./card.ts";
 
-/** The two default lanes. "Idle" (stale-but-open) is a P4 wall-clock concern; here a
- *  not-yet-closed activity is `active` and a closed one is `closed`. */
-export type Lane = "active" | "closed";
+/** The three lanes. "Idle" (stale-but-open) is a P4 wall-clock concern supplied by
+ *  the watcher; a closed activity is `closed`, an open+stale one is `idle`, and any
+ *  other open one is `active`. */
+export type Lane = "active" | "idle" | "closed";
 
-/** Which lane an activity belongs to — from the folded status, nothing else. */
-export function laneFor(view: ActivityView): Lane {
-  return view.status === "closed" ? "closed" : "active";
+/**
+ * Which lane an activity belongs to. Terminal (folded `status === "closed"`) always
+ * wins → `closed`. Otherwise, if the watcher flags it stale (`opts.stale`, a
+ * wall-clock signal the pure fold can't produce) → `idle`; else `active`. Lane is a
+ * partition (each activity is in exactly one lane); staleness is layered ON TOP of the
+ * folded status, never a second status code path.
+ */
+export function laneFor(view: ActivityView, opts?: { stale?: boolean }): Lane {
+  if (view.status === "closed") return "closed";
+  if (opts?.stale) return "idle";
+  return "active";
 }
 
 /** Default layout per lane: Active → cards, Closed/Idle → table (R-13). */
 export const DEFAULT_LAYOUT: Record<Lane, "cards" | "table"> = {
   active: "cards",
+  idle: "table",
   closed: "table",
 };
 

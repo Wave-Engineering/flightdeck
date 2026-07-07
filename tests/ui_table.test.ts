@@ -72,7 +72,14 @@ describe("per-lane toggle defaults (R-13)", () => {
     store.append(ev({ kind: "activity_start", activityId: "clo1", ts: "2026-07-07T09:00:00Z", activityType: "float", label: "Closed", detail: { cord: 6 } }));
     store.append(ev({ kind: "activity_end", activityId: "clo1", ts: "2026-07-07T09:30:00Z" }));
 
-    const board = renderBoard(store);
+    // Inject a fixed clock so the open campaign (last event 10:00) is NOT stale under
+    // the 15-min threshold and stays in the Active lane (the P4 watcher would otherwise
+    // move a long-past-dated fixture into Idle). Idle-lane behaviour is covered in
+    // watcher.test.ts.
+    const board = renderBoard(store, {
+      now: Date.parse("2026-07-07T10:10:00Z"),
+      staleMs: 15 * 60 * 1000,
+    });
     expect(board).toContain('data-lane="active" data-layout="cards"');
     expect(board).toContain('data-lane="closed" data-layout="table"');
     // one independent toggle button per lane

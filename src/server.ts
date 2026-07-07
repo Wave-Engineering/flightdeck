@@ -16,6 +16,7 @@
 import type { FlightDeckEvent } from "./events/contract.ts";
 import { EventValidationError, validateEvent } from "./events/contract.ts";
 import { EventLog, type IngestSink } from "./log.ts";
+import { StalenessNotifier } from "./push_discord.ts";
 import { Store } from "./store.ts";
 import { parseScope } from "./ui/log_viewer.ts";
 import { renderLogPage, renderPage, UiHub } from "./ui/page.ts";
@@ -177,11 +178,26 @@ if (import.meta.main) {
   // Store = append-only log (source of truth) + SQLite materialized view; the view
   // is rebuilt from the log on boot, so a lost/corrupt db self-heals (R-09).
   const sink = new Store({ log: new EventLog(logPath), dbPath });
-  // UI hub renders the console from the store and live-pushes over SSE; onEvent
-  // broadcasts a fresh board after every ingest (R-11).
+  // UI hub renders the console from the store and live-pushes over SSE (R-11).
   const ui = new UiHub(sink);
-  const server = createServer({ port, token, sink, ui, onEvent: () => ui.broadcast() });
+  // P4 staleness watcher + Discord push (S4.1/S4.2). Inert-by-default: no alert goes
+  // out unless FLIGHTDECK_DISCORD_CHANNEL + FLIGHTDECK_DISCORD_TOKEN are set. The
+  // container is the sole pusher (NG / cutover). A `tick` both flags newly-stale
+  // activities (one de-duped Discord alert each) and refreshes the board so the Idle
+  // lane lights live. Staleness is time-driven, so beyond the per-ingest tick we run a
+  // heartbeat — an activity goes idle by the passage of time, not by a new event.
+  const notifier = new StalenessNotifier();
+  const tick = (): void => {
+    notifier.tick(sink.getView(), Date.now());
+    ui.broadcast();
+  };
+  const server = createServer({ port, token, sink, ui, onEvent: tick });
+  const rawWatchMs = Number(process.env["FLIGHTDECK_WATCH_INTERVAL_MS"] ?? "60000");
+  const watchMs = Number.isFinite(rawWatchMs) && rawWatchMs > 0 ? rawWatchMs : 60000;
+  const watchTimer = setInterval(tick, watchMs);
+  watchTimer.unref?.();
   console.error(
-    `[flightdeck] listening on http://${server.hostname}:${server.port} (log: ${logPath}, view: ${dbPath})`,
+    `[flightdeck] listening on http://${server.hostname}:${server.port} (log: ${logPath}, view: ${dbPath})` +
+      ` — staleness push ${notifier.active ? "ENABLED" : "inert (Discord not configured)"}`,
   );
 }
