@@ -285,8 +285,13 @@ export class UiHub {
   /** Register a new client: flush headers, then hand it a snapshot immediately. */
   addClient(writer: WritableStreamDefaultWriter<Uint8Array>): void {
     this.clients.add(writer);
-    void writer.write(this.encoder.encode(": hello\n\n"));
-    void writer.write(this.encoder.encode(this.boardFrame("snapshot")));
+    // Prune (don't leak an unhandled rejection) if the client drops mid-snapshot —
+    // same defensive pattern as broadcast()/removeClient().
+    const prune = () => {
+      this.clients.delete(writer);
+    };
+    void writer.write(this.encoder.encode(": hello\n\n")).catch(prune);
+    void writer.write(this.encoder.encode(this.boardFrame("snapshot"))).catch(prune);
   }
 
   removeClient(writer: WritableStreamDefaultWriter<Uint8Array>): void {
