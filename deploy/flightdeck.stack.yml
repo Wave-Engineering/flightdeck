@@ -1,0 +1,102 @@
+# FlightDeck — Docker Swarm stack (S5.5 / #879). DELIVERABLE, NOT applied here.
+#
+# The OPERATOR deploys this; this repo never runs `docker stack deploy` and never
+# edits any existing/prod manifest (ABSOLUTE prod rule / NG-1). Everything you must
+# fill is a SEAM — see deploy/README.md ("## SEAMS") and the `# SEAM:` comments.
+#
+# Validate WITHOUT deploying (interpolation runs, so IMAGE_TAG must be set):
+#   IMAGE_TAG=v0.1.0 docker stack config -c deploy/flightdeck.stack.yml
+#
+# Deploy (operator, off a checkout of a released tag):
+#   IMAGE_TAG=v0.1.0 docker stack deploy -c deploy/flightdeck.stack.yml flightdeck
+version: "3.8"
+
+services:
+  flightdeck:
+    # Image built + pushed to GHCR by .github/workflows/release.yml on a v* tag.
+    # SEAM: pin IMAGE_TAG to a released tag (e.g. v0.1.0). Never `latest` in prod.
+    image: ghcr.io/wave-engineering/flightdeck:${IMAGE_TAG:?set IMAGE_TAG to a released tag, e.g. v0.1.0}
+
+    environment:
+      PORT: "8080"
+      # Persistent state paths — both live on the flightdeck_data volume (below).
+      FLIGHTDECK_LOG_PATH: /data/events.jsonl
+      FLIGHTDECK_DB_PATH: /data/flightdeck.db
+      # Ingest bearer token is delivered as a FILE (Swarm secret) and bridged into
+      # the env the server reads by the image entrypoint (docker-entrypoint.sh).
+      FLIGHTDECK_INGEST_TOKEN_FILE: /run/secrets/flightdeck_ingest_token
+      # Staleness watcher cadence + threshold (optional; shown with their defaults).
+      FLIGHTDECK_WATCH_INTERVAL_MS: "${FLIGHTDECK_WATCH_INTERVAL_MS:-60000}"
+      FLIGHTDECK_STALE_MS: "${FLIGHTDECK_STALE_MS:-900000}"
+      # Discord push (P4) is INERT unless BOTH channel + token resolve. SEAM: set
+      # the channel here (and create the discord token secret below) to enable
+      # phone alerts. Left blank => no transport => no push.
+      FLIGHTDECK_DISCORD_CHANNEL: "${FLIGHTDECK_DISCORD_CHANNEL:-}"
+      FLIGHTDECK_DISCORD_TOKEN_FILE: /run/secrets/flightdeck_discord_token
+
+    secrets:
+      # Required: the shared ingest bearer token. Create it BEFORE deploy (README).
+      - flightdeck_ingest_token
+      # Optional: the Discord bot token. Harmless if the source is a placeholder —
+      # push stays inert unless FLIGHTDECK_DISCORD_CHANNEL is also set. SEAM.
+      - flightdeck_discord_token
+
+    volumes:
+      # Persistent named volume: append-only event log (source of truth) + SQLite
+      # materialized view both live under /data. The view self-heals from the log
+      # on boot, so at minimum the log must survive restarts.
+      - flightdeck_data:/data
+
+    networks:
+      # Internal overlay so the stack is self-contained and validates standalone.
+      - flightdeck
+      # SEAM: attach the EXISTING Swarm ingress / reverse-proxy network so the
+      # console (GET /) and POST /ingest are reachable. Do NOT guess the name —
+      # uncomment and set it to your real ingress network.
+      # - ingress-public   # <-- operator: replace with your ingress network name
+
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+      update_config:
+        order: start-first
+      # SEAM: ingress routing labels (Traefik / Caddy / nginx-proxy, etc.) go here
+      # — host rule, entrypoint, TLS, and the service port (8080). Left as a plain
+      # marker label because the ingress is homelab-specific. deploy/README.md has
+      # a copy-paste Traefik example.
+      labels:
+        - "flightdeck.role=status-console"
+
+    # Liveness also defined in the image; restated here so Swarm surfaces it.
+    healthcheck:
+      test:
+        - "CMD"
+        - "bun"
+        - "-e"
+        - "fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+secrets:
+  # SEAM: both secrets are `external` — the operator creates them in Swarm's
+  # encrypted store BEFORE deploy (see deploy/README.md). Real values live ONLY in
+  # Swarm, NEVER in this file or the repo.
+  flightdeck_ingest_token:
+    external: true
+  flightdeck_discord_token:
+    external: true
+
+volumes:
+  flightdeck_data:
+    # SEAM: `local` pins state to one node. For a multi-node Swarm, swap in a
+    # networked/backed volume driver (or constrain the service to the node that
+    # owns this volume) so state survives rescheduling.
+    driver: local
+
+networks:
+  flightdeck:
+    driver: overlay
+    attachable: true
