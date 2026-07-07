@@ -199,9 +199,12 @@ const CLIENT_SCRIPT = `
   });
 
   // Live blocked-on-you tick: cards currently blocked accrue wall time since load.
+  // Match BOTH ETA variants — the inline card figure (.fd-eta .fd-eta-blocked) AND the
+  // headline strip figure (.fd-eta-strip .fd-eta-blocked) — via the data-blocked-ms
+  // marker both carry, so the big headline figure ticks live too (eta_strip.ts).
   var loadedAt = Date.now();
   setInterval(function () {
-    var els = board.querySelectorAll('.fd-card[data-status="blocked"] .fd-eta .fd-eta-blocked');
+    var els = board.querySelectorAll('.fd-card[data-status="blocked"] .fd-eta-blocked[data-blocked-ms]');
     for (var i = 0; i < els.length; i++) {
       var base = parseInt(els[i].getAttribute('data-blocked-ms') || '0', 10);
       var live = base + (Date.now() - loadedAt);
