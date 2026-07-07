@@ -33,12 +33,14 @@ Deliverables in this repo:
 
 ## 1. Choose the image tag
 
-Releases are cut by pushing a `v*` tag to the repo, which runs
-`.github/workflows/release.yml` and publishes the image. Pick a **released** tag
+Releases are cut by pushing a `v*` **git** tag (e.g. `v0.1.0`), which runs
+`.github/workflows/release.yml` and publishes the image. **The published image tag
+strips the leading `v`** (semver convention — git `v0.1.0` → image `0.1.0`), so
+`IMAGE_TAG` below is the *image* tag, not the git tag. Pick a **released** tag
 (never `latest` in prod) and export it — the stack file requires it:
 
 ```sh
-export IMAGE_TAG=v0.1.0
+export IMAGE_TAG=0.1.0        # git tag v0.1.0 → image tag 0.1.0
 ```
 
 Pull it onto the nodes (optional; Swarm will pull on deploy):
@@ -136,7 +138,7 @@ these are resolved.
 
 | Seam | Where | What to do |
 | --- | --- | --- |
-| **Image tag** | `IMAGE_TAG` env | Pin to a released `v*` tag (e.g. `v0.1.0`). The stack refuses to render without it. Never `latest` in prod. |
+| **Image tag** | `IMAGE_TAG` env | Pin to a released **image** tag, e.g. `0.1.0` (git tag `v0.1.0` publishes image `0.1.0` — the `v` is stripped). The stack refuses to render without it. Never `latest` in prod. |
 | **Ingest token secret** | `docker secret flightdeck_ingest_token` | Create it (step 2). Same value goes to the emitters. Required — the server fails closed without it. |
 | **Ingress network + routing labels** | `services.flightdeck.networks` + `deploy.labels` in the stack | Attach your existing ingress overlay and add your proxy's route → port `8080` (step 4). Left commented — not guessed. |
 | **Discord push** (optional) | `FLIGHTDECK_DISCORD_CHANNEL` env + `flightdeck_discord_token` secret | Set BOTH to enable phone alerts; leave blank to keep push inert. |

@@ -5,17 +5,17 @@
 # fill is a SEAM — see deploy/README.md ("## SEAMS") and the `# SEAM:` comments.
 #
 # Validate WITHOUT deploying (interpolation runs, so IMAGE_TAG must be set):
-#   IMAGE_TAG=v0.1.0 docker stack config -c deploy/flightdeck.stack.yml
+#   IMAGE_TAG=0.1.0 docker stack config -c deploy/flightdeck.stack.yml
 #
 # Deploy (operator, off a checkout of a released tag):
-#   IMAGE_TAG=v0.1.0 docker stack deploy -c deploy/flightdeck.stack.yml flightdeck
+#   IMAGE_TAG=0.1.0 docker stack deploy -c deploy/flightdeck.stack.yml flightdeck
 version: "3.8"
 
 services:
   flightdeck:
     # Image built + pushed to GHCR by .github/workflows/release.yml on a v* tag.
-    # SEAM: pin IMAGE_TAG to a released tag (e.g. v0.1.0). Never `latest` in prod.
-    image: ghcr.io/wave-engineering/flightdeck:${IMAGE_TAG:?set IMAGE_TAG to a released tag, e.g. v0.1.0}
+    # SEAM: pin IMAGE_TAG to a released tag (e.g. 0.1.0). Never `latest` in prod.
+    image: ghcr.io/wave-engineering/flightdeck:${IMAGE_TAG:?set IMAGE_TAG to a released tag, e.g. 0.1.0}
 
     environment:
       PORT: "8080"
