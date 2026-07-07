@@ -89,6 +89,40 @@ describe("renderLogViewer", () => {
   });
 });
 
+describe("renderLogViewer anchors the exact logRef event (R-15)", () => {
+  test("a logRef highlights ONLY the referenced event within the scoped transcript", () => {
+    // Tagged case: scope narrows to A@wave-3.1 (step + concern), logRef pins the concern.
+    const html = renderLogViewer(EVENTS, { activityId: "A", wave: "3.1" }, "log/A#42");
+    expect((html.match(/fd-log-line/g) ?? []).length).toBe(2); // scope narrowing intact
+    expect((html.match(/is-anchored/g) ?? []).length).toBe(1); // exactly one line pinned
+    // the pinned line is the concern (carries the logRef) and gets the scroll-target id.
+    const anchored = html.match(/<div class="fd-log-line is-anchored" id="fd-log-anchor"[^>]*data-kind="([^"]+)"/);
+    expect(anchored).not.toBeNull();
+    expect(anchored![1]).toBe("concern");
+  });
+
+  test("campaign-level concern (logRef present, NO scope tags) still pins the exact event", () => {
+    // Empty scope → full transcript; the logRef alone anchors the one referenced event
+    // instead of the click-through landing on the entire activity transcript.
+    const html = renderLogViewer(EVENTS, {}, "log/A#42");
+    expect((html.match(/fd-log-line/g) ?? []).length).toBe(EVENTS.length); // whole transcript
+    expect((html.match(/is-anchored/g) ?? []).length).toBe(1); // one exact event pinned
+    expect(html).toContain('id="fd-log-anchor"');
+  });
+
+  test("no logRef → nothing anchored (plain scoped transcript)", () => {
+    const html = renderLogViewer(EVENTS, { activityId: "A", wave: "3.1" });
+    expect(html).not.toContain("is-anchored");
+    expect(html).not.toContain('id="fd-log-anchor"');
+  });
+
+  test("unknown logRef anchors nothing but still renders the scoped transcript", () => {
+    const html = renderLogViewer(EVENTS, { activityId: "A", wave: "3.1" }, "log/none");
+    expect((html.match(/fd-log-line/g) ?? []).length).toBe(2);
+    expect(html).not.toContain("is-anchored");
+  });
+});
+
 describe("/log route (end-to-end scope click-through)", () => {
   let dir: string;
   let store: Store;
@@ -114,6 +148,36 @@ describe("/log route (end-to-end scope click-through)", () => {
     // match the div (not the .fd-log-line CSS selector in the embedded stylesheet)
     expect((body.match(/<div class="fd-log-line"/g) ?? []).length).toBe(2);
     expect(body).toContain("Wave 3.1");
+  });
+
+  test("GET /log with a logRef resolves to and highlights the exact referenced event", async () => {
+    // The real concern-queue click-through: scope tags + the concern's logRef.
+    const res = await handleRequest(
+      new Request("http://x/log?activityId=A&wave=3.1&flight=2&logRef=log%2FA%2342"),
+      cfg(new UiHub(store)),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    // exactly one anchored line, and it is the concern event carrying the logRef.
+    expect((body.match(/<div class="fd-log-line is-anchored" id="fd-log-anchor"/g) ?? []).length).toBe(1);
+    expect(body).toContain('data-kind="concern"');
+    // and the page scrolls the anchor into view (no framework, one-liner).
+    expect(body).toContain("getElementById('fd-log-anchor')");
+  });
+
+  test("GET /log campaign-level (logRef, no phase/wave/flight tags) pins the exact event", async () => {
+    // A campaign-level concern carries a logRef but no phase/wave/flight tags. Without
+    // logRef anchoring this lands on the ENTIRE activity transcript; with it, one line pins.
+    const res = await handleRequest(
+      new Request("http://x/log?activityId=A&logRef=log%2FA%2342"),
+      cfg(new UiHub(store)),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    const lines = (body.match(/<div class="fd-log-line/g) ?? []).length;
+    expect(lines).toBe(4); // A's four events — the whole activity transcript
+    // div-specific (the embedded stylesheet also mentions .fd-log-line.is-anchored).
+    expect((body.match(/<div class="fd-log-line is-anchored"/g) ?? []).length).toBe(1);
   });
 
   test("POST /log is rejected (405)", async () => {

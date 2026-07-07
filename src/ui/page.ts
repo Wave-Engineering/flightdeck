@@ -19,7 +19,7 @@ import type { CardModel } from "./card.ts";
 import { buildConcernQueue, renderConcernQueue } from "./concern_queue.ts";
 import { DEFAULT_LAYOUT, type Lane, laneFor, renderGrid } from "./grid.ts";
 import { escapeHtml } from "./format.ts";
-import { type LogScope, renderLogViewer } from "./log_viewer.ts";
+import { LOG_ANCHOR_ID, type LogScope, renderLogViewer } from "./log_viewer.ts";
 import { renderTable } from "./table.ts";
 
 /** Build a CardModel per activity: folded view + its derived metrics + split ETA. */
@@ -133,8 +133,16 @@ main { padding: 16px; }
 /* scoped log viewer (S3.5) */
 .fd-log { font-family: ui-monospace, monospace; font-size: 12px; }
 .fd-log-line { padding: 2px 0; border-bottom: 1px solid var(--line); white-space: pre-wrap; }
+.fd-log-line.is-anchored { background: #f59e0b22; border-left: 3px solid #d9822b; padding-left: 6px; scroll-margin-top: 40px; }
+.fd-log-anchor-ref { font-size: 11px; opacity: .7; border: 1px solid #d9822b; border-radius: 6px; padding: 1px 6px; }
 .fd-log-empty { opacity: .55; }
 `;
+
+// Scroll the logRef-anchored line into view on the scoped log page. No framework —
+// a one-liner that no-ops when nothing is anchored (matches the vanilla-client rule).
+const LOG_SCROLL_SCRIPT =
+  `var a=document.getElementById('${LOG_ANCHOR_ID}');` +
+  `if(a){a.scrollIntoView({block:'center'});}`;
 
 // Framework-free live client. No backticks / no ${...} inside, so it embeds safely
 // in the template literal below. Handlers are delegated on `document` and prefs are
@@ -234,15 +242,20 @@ export function renderPage(store: Store): string {
   );
 }
 
-/** The scoped log-viewer page served at `/log` (concern-queue click-through target). */
-export function renderLogPage(store: Store, scope: LogScope): string {
-  const viewer = renderLogViewer(store.allEvents(), scope);
+/**
+ * The scoped log-viewer page served at `/log` (concern-queue click-through target).
+ * `logRef` (carried in the link alongside the scope tags) pins/highlights the exact
+ * referenced event within the scoped transcript and scrolls it into view (R-15).
+ */
+export function renderLogPage(store: Store, scope: LogScope, logRef?: string | null): string {
+  const viewer = renderLogViewer(store.allEvents(), scope, logRef);
   return (
     `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
     `<title>FlightDeck — log</title><style>${STYLES}</style></head><body>` +
     `<div class="fd-topbar"><h1>FlightDeck</h1><a class="fd-scope-link" href="/">← board</a></div>` +
     `<main>${viewer}</main>` +
+    `<script>${LOG_SCROLL_SCRIPT}</script>` +
     `</body></html>`
   );
 }

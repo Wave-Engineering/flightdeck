@@ -89,10 +89,13 @@ export async function handleRequest(req: Request, cfg: ServerConfig): Promise<Re
     }
     if (url.pathname === "/log") {
       if (req.method !== "GET") return json({ error: "method not allowed" }, 405);
-      // Scoped transcript — the concern-queue scope-link target (R-15).
-      return new Response(renderLogPage(cfg.ui.store, parseScope(url.searchParams)), {
-        headers: { "content-type": "text/html; charset=utf-8" },
-      });
+      // Scoped transcript — the concern-queue scope-link target (R-15). `logRef` is
+      // carried alongside the scope tags (parseScope omits it) and pins/highlights the
+      // exact referenced event within the scoped transcript.
+      return new Response(
+        renderLogPage(cfg.ui.store, parseScope(url.searchParams), url.searchParams.get("logRef")),
+        { headers: { "content-type": "text/html; charset=utf-8" } },
+      );
     }
     if (url.pathname === "/events") {
       if (req.method !== "GET") return json({ error: "method not allowed" }, 405);

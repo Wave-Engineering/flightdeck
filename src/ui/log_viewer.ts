@@ -60,7 +60,10 @@ function scopeSummary(scope: LogScope): string {
   return parts.length > 0 ? parts.join(" › ") : "all events";
 }
 
-function logLine(e: FlightDeckEvent): string {
+/** The id the log page scrolls to; assigned to the first `logRef`-anchored line. */
+export const LOG_ANCHOR_ID = "fd-log-anchor";
+
+function logLine(e: FlightDeckEvent, opts?: { anchored?: boolean; scrollTarget?: boolean }): string {
   const scopeBits = [
     e.phase ? `P${e.phase}` : "",
     e.wave ? `W${e.wave}` : "",
@@ -75,8 +78,10 @@ function logLine(e: FlightDeckEvent): string {
       : e.kind === "concern"
         ? `${e.concernKind ?? ""} (${e.source ?? ""})`
         : (e.label ?? "");
+  const cls = `fd-log-line${opts?.anchored ? " is-anchored" : ""}`;
+  const id = opts?.scrollTarget ? ` id="${LOG_ANCHOR_ID}"` : "";
   return (
-    `<div class="fd-log-line" data-kind="${escapeHtml(e.kind)}">` +
+    `<div class="${cls}"${id} data-kind="${escapeHtml(e.kind)}">` +
     `<span class="fd-log-ts">${escapeHtml(e.ts)}</span> ` +
     `<span class="fd-log-kind">${escapeHtml(e.kind)}</span> ` +
     (scopeBits ? `<span class="fd-log-scope">${escapeHtml(scopeBits)}</span> ` : "") +
@@ -88,15 +93,42 @@ function logLine(e: FlightDeckEvent): string {
 /**
  * Render the scoped transcript: a header naming the active scope, then one line per
  * event narrowed to that scope (in log order). Empty scope → the full transcript.
+ *
+ * When a `logRef` is supplied (the concern-queue click-through carries one alongside
+ * the scope tags), `resolveLogRef` pins the exact referenced event WITHIN the scoped
+ * transcript: its line gets the `is-anchored` highlight and the first match carries the
+ * scroll-target id (R-15). This is precise anchoring layered ON TOP of scope filtering —
+ * the tagged narrowing is unchanged, and it's what makes a campaign-level concern (a
+ * `logRef` but no phase/wave/flight tags) land on the exact event instead of the whole
+ * activity transcript.
  */
-export function renderLogViewer(events: FlightDeckEvent[], scope: LogScope): string {
+export function renderLogViewer(
+  events: FlightDeckEvent[],
+  scope: LogScope,
+  logRef?: string | null,
+): string {
   const filtered = filterByScope(events, scope);
+  const anchors =
+    logRef !== undefined && logRef !== null && logRef.length > 0
+      ? new Set(resolveLogRef(filtered, logRef))
+      : new Set<FlightDeckEvent>();
+  let scrollAssigned = false;
+  const summary = scopeSummary(scope);
   const header =
     `<div class="fd-log-head"><h2>Log</h2>` +
-    `<span class="fd-log-scope-summary">${escapeHtml(scopeSummary(scope))}</span>` +
+    `<span class="fd-log-scope-summary">${escapeHtml(summary)}</span>` +
+    (anchors.size > 0 ? `<span class="fd-log-anchor-ref">${escapeHtml(logRef!)}</span>` : "") +
     `<span class="fd-log-count">${filtered.length}</span></div>`;
   if (filtered.length === 0) {
     return `<section class="fd-log">${header}<div class="fd-log-empty">no events for this scope</div></section>`;
   }
-  return `<section class="fd-log">${header}${filtered.map(logLine).join("")}</section>`;
+  const lines = filtered
+    .map((e) => {
+      const anchored = anchors.has(e);
+      const scrollTarget = anchored && !scrollAssigned;
+      if (scrollTarget) scrollAssigned = true;
+      return logLine(e, { anchored, scrollTarget });
+    })
+    .join("");
+  return `<section class="fd-log">${header}${lines}</section>`;
 }
