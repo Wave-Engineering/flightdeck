@@ -15,6 +15,7 @@
 
 import { EventValidationError, validateEvent } from "./events/contract.ts";
 import { EventLog, type IngestSink } from "./log.ts";
+import { Store } from "./store.ts";
 
 export interface ServerConfig {
   port: number;
@@ -122,8 +123,13 @@ if (import.meta.main) {
     process.exit(1);
   }
   const logPath = process.env["FLIGHTDECK_LOG_PATH"] ?? "data/events.jsonl";
+  const dbPath = process.env["FLIGHTDECK_DB_PATH"] ?? "data/flightdeck.db";
   const port = Number(process.env["PORT"] ?? "8080");
-  const sink = new EventLog(logPath);
+  // Store = append-only log (source of truth) + SQLite materialized view; the view
+  // is rebuilt from the log on boot, so a lost/corrupt db self-heals (R-09).
+  const sink = new Store({ log: new EventLog(logPath), dbPath });
   const server = createServer({ port, token, sink });
-  console.error(`[flightdeck] listening on http://${server.hostname}:${server.port} (log: ${logPath})`);
+  console.error(
+    `[flightdeck] listening on http://${server.hostname}:${server.port} (log: ${logPath}, view: ${dbPath})`,
+  );
 }
