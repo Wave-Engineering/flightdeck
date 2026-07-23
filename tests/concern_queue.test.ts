@@ -95,7 +95,10 @@ describe("render", () => {
     expect(html).toContain("Concern queue");
     expect(html).toContain("fd-scope-link");
     expect(html).toContain("is-stalled");
-    expect((html.match(/fd-concern-row/g) ?? []).length).toBe(3);
+    // Row elements only — the #10 scroll wrapper (.fd-concern-rows) shares the
+    // class prefix, so match the element class with its delimiter.
+    expect((html.match(/class="fd-concern-row[ "]/g) ?? []).length).toBe(3);
+    expect(html).toContain('class="fd-concern-rows"'); // the scroll container (#10)
   });
 
   test("empty queue shows an explicit empty state", () => {

@@ -32,6 +32,18 @@ export function formatDuration(ms: number | null): string {
 }
 
 /**
+ * The last path segment of a forge/project path (#10): "Wave-Engineering/flightdeck"
+ * → "flightdeck". Non-path values pass through unchanged; trailing slashes are
+ * tolerated; a value that reduces to nothing (e.g. "/") falls back to the input.
+ */
+export function shortName(value: string): string {
+  const trimmed = value.replace(/\/+$/, "");
+  const idx = trimmed.lastIndexOf("/");
+  const short = idx === -1 ? trimmed : trimmed.slice(idx + 1);
+  return short.length > 0 ? short : value;
+}
+
+/**
  * Render a derived-metric value for a metric cell. `null` is a *seamed-absent*
  * value (e.g. the #853-gated token stub) and shows as an em dash — never faked.
  */

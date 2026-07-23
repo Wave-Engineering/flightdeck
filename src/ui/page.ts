@@ -38,8 +38,6 @@ export function buildCardModels(store: Store, views?: ActivityView[]): CardModel
   });
 }
 
-const LANE_ORDER: Lane[] = ["active", "idle", "closed"];
-
 /** Wall-clock inputs for the staleness watcher (S4.1). Injected in tests for a
  *  deterministic clock; the live UI defaults to the real clock + env threshold. */
 export interface StalenessOpts {
@@ -102,83 +100,101 @@ export function renderBoard(store: Store, opts?: StalenessOpts): string {
     if (arr) arr.push(m);
     else byLane.set(lane, [m]);
   }
-  const lanes = LANE_ORDER.map((lane) => renderLane(lane, byLane.get(lane) ?? [])).join("");
-  return presence + concerns + lanes;
+  const lane = (l: Lane) => renderLane(l, byLane.get(l) ?? []);
+  // Board order (#10): presence, Active, THEN the concern queue, then Idle/Closed —
+  // the queue sits between what is moving and what has stalled.
+  return presence + lane("active") + concerns + lane("idle") + lane("closed");
 }
 
+// Cyberpunk theme (#10): committed dark, neon status accents. Text-contrast of
+// every accent vs the surface computed at ≥4.5:1 (WCAG AA small text); status is
+// never color-alone (badges/chips always carry words). Layout rules unchanged.
 const STYLES = `
-:root { color-scheme: light dark; --gap: 12px; --radius: 10px; --line: #8883; }
+:root { color-scheme: dark; --gap: 12px; --radius: 10px;
+  --bg: #0b0e1a; --panel: #101426; --line: #2a3152;
+  --ink: #e6ecff; --muted: #97a0c0;
+  --cyan: #00e5ff; --magenta: #ff2d95; --violet: #7aa2ff;
+  --amber: #ffb200; --red: #ff3860; --dim: #8892b0; }
 * { box-sizing: border-box; }
-body { margin: 0; font: 14px/1.45 ui-sans-serif, system-ui, sans-serif; }
-.fd-topbar { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
-.fd-topbar h1 { font-size: 15px; margin: 0; letter-spacing: .02em; }
-.fd-live { font-size: 11px; opacity: .7; }
+body { margin: 0; font: 14px/1.45 ui-sans-serif, system-ui, sans-serif; background: var(--bg); color: var(--ink); }
+.fd-topbar { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: linear-gradient(180deg, #10142688, transparent); }
+.fd-topbar h1 { font-size: 15px; margin: 0; letter-spacing: .08em; text-transform: uppercase; color: var(--cyan); text-shadow: 0 0 10px #00e5ff55; }
+.fd-live { font-size: 11px; color: var(--cyan); text-shadow: 0 0 6px #00e5ff77; }
 main { padding: 16px; }
 .fd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--gap); }
-.fd-grid-empty { opacity: .6; padding: 24px; }
-.fd-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.fd-grid-empty { color: var(--muted); padding: 24px; }
+.fd-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 8px; background: var(--panel); }
+.fd-card[data-status="active"] { border-color: #00e5ff44; box-shadow: 0 0 12px #00e5ff14; }
+.fd-card[data-status="blocked"] { border-color: #ff2d9566; box-shadow: 0 0 12px #ff2d9522; }
 .fd-card-head { display: flex; align-items: center; gap: 8px; }
 .fd-card-title { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fd-badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); opacity: .85; }
-.fd-badge-status[data-status="blocked"] { color: #d9822b; border-color: #d9822b; }
-.fd-badge-status[data-status="ci-wait"] { color: #3b82f6; border-color: #3b82f6; }
-.fd-badge-status[data-status="closed"] { opacity: .55; }
+.fd-badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.fd-badge-status[data-status="active"] { color: var(--cyan); border-color: var(--cyan); text-shadow: 0 0 6px #00e5ff55; }
+.fd-badge-status[data-status="blocked"] { color: var(--magenta); border-color: var(--magenta); text-shadow: 0 0 6px #ff2d9555; }
+.fd-badge-status[data-status="ci-wait"] { color: var(--violet); border-color: var(--violet); }
+.fd-badge-status[data-status="closed"] { color: var(--dim); border-color: var(--line); }
 .fd-card-toggle { background: none; border: none; cursor: pointer; font-size: 14px; color: inherit; padding: 0 4px; }
 .fd-vitals { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .fd-progress { font-variant-numeric: tabular-nums; }
-.fd-estimator-label { opacity: .6; }
+.fd-estimator-label { color: var(--muted); }
 .fd-eta { display: inline-flex; gap: 10px; font-variant-numeric: tabular-nums; }
-.fd-eta-blocked { color: #d9822b; }
+.fd-eta-blocked { color: var(--magenta); }
 .fd-chip { font-size: 11px; padding: 1px 7px; border-radius: 999px; }
-.fd-chip-concern { color: #dc2626; border: 1px solid #dc2626; }
+.fd-chip-concern { color: var(--red); border: 1px solid var(--red); text-shadow: 0 0 6px #ff386055; }
 .fd-metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
 .fd-card[data-expanded="false"] .fd-metrics-grid,
 .fd-card[data-expanded="false"] .fd-eta-strip { display: none; }
 .fd-metric { display: flex; flex-direction: column; }
-.fd-metric-label { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; opacity: .55; }
+.fd-metric-label { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .fd-metric-value { font-variant-numeric: tabular-nums; }
 /* per-lane card/table switch (S3.2) */
 .fd-lane { margin-bottom: 20px; }
 .fd-lane-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.fd-lane-head h2 { font-size: 13px; margin: 0; text-transform: uppercase; letter-spacing: .05em; opacity: .7; }
-/* Idle lane (P4 stale-but-open) reads distinct from Active/Closed — amber, like blocked. */
-.fd-lane[data-lane="idle"] .fd-lane-head h2 { color: #d9822b; opacity: .9; }
-.fd-lane[data-lane="idle"] .fd-lane-count { color: #d9822b; }
+.fd-lane-head h2 { font-size: 13px; margin: 0; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.fd-lane[data-lane="active"] .fd-lane-head h2 { color: var(--cyan); text-shadow: 0 0 8px #00e5ff44; }
+/* Idle lane (P4 stale-but-open) reads distinct — neon amber. */
+.fd-lane[data-lane="idle"] .fd-lane-head h2 { color: var(--amber); text-shadow: 0 0 8px #ffb20044; }
+.fd-lane[data-lane="idle"] .fd-lane-count { color: var(--amber); }
 .fd-lane-toggle { font-size: 11px; cursor: pointer; background: none; border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; color: inherit; }
+.fd-lane-toggle:hover { border-color: var(--cyan); color: var(--cyan); }
 .fd-lane[data-layout="cards"] .fd-lane-table { display: none; }
 .fd-lane[data-layout="table"] .fd-lane-cards { display: none; }
 .fd-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 .fd-table th, .fd-table td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); font-weight: 400; }
-.fd-table th { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; opacity: .55; }
-/* global concern queue (S3.3) */
-.fd-concerns { border: 1px solid #dc262655; border-radius: var(--radius); padding: 12px; margin-bottom: 20px; }
-.fd-concerns h2 { font-size: 13px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .05em; }
+.fd-table th { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+/* global concern queue (S3.3) — sits between Active and Idle (#10) */
+.fd-concerns { border: 1px solid #ff386066; border-radius: var(--radius); padding: 12px; margin-bottom: 20px; background: #ff38600a; box-shadow: 0 0 14px #ff386011; }
+.fd-concerns h2 { font-size: 13px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .05em; color: var(--red); text-shadow: 0 0 8px #ff386044; }
+/* scrollable rows container (#10): ~6 rows visible (row ≈ 31px), scroll — never truncate */
+.fd-concern-rows { max-height: 188px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.fd-concern-rows::-webkit-scrollbar { width: 8px; }
+.fd-concern-rows::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
 .fd-concern-row { display: flex; align-items: baseline; gap: 10px; padding: 5px 0; border-top: 1px solid var(--line); }
-.fd-concern-row.is-stalled { background: #dc26260f; }
+.fd-concern-row.is-stalled { background: #ff38601a; }
 .fd-concern-kind { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); }
-.fd-scope-link { font-size: 12px; opacity: .8; text-decoration: none; border-bottom: 1px dotted currentColor; }
-.fd-empty { opacity: .55; }
+.fd-scope-link { font-size: 12px; color: var(--violet); text-decoration: none; border-bottom: 1px dotted currentColor; }
+.fd-empty { color: var(--muted); }
 /* agent-presence strip (#7): sessions are presence chips, not campaign cards */
-.fd-presence { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 20px; }
-.fd-presence h2 { font-size: 13px; margin: 0; text-transform: uppercase; letter-spacing: .05em; opacity: .7; }
-.fd-presence-chip { display: inline-flex; gap: 6px; align-items: baseline; font-size: 12px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; }
-.fd-presence-chip[data-stale="true"] { color: #d9822b; border-color: #d9822b; }
+.fd-presence { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid #00e5ff33; border-radius: var(--radius); margin-bottom: 20px; background: #00e5ff08; }
+.fd-presence h2 { font-size: 13px; margin: 0; text-transform: uppercase; letter-spacing: .05em; color: var(--cyan); text-shadow: 0 0 8px #00e5ff44; }
+.fd-presence-chip { display: inline-flex; gap: 6px; align-items: baseline; font-size: 12px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; background: var(--panel); }
+.fd-presence-chip[data-stale="true"] { color: var(--amber); border-color: var(--amber); }
 .fd-presence-agent { font-weight: 600; }
-.fd-presence-count { font-variant-numeric: tabular-nums; }
-.fd-presence-stalecount { color: #d9822b; }
-.fd-presence-host, .fd-presence-last { opacity: .6; }
+.fd-presence-count { font-variant-numeric: tabular-nums; color: var(--cyan); }
+.fd-presence-stalecount { color: var(--amber); }
+.fd-presence-host, .fd-presence-last { color: var(--muted); }
 /* split-ETA headline strip (S3.4) */
 .fd-eta-strip { display: flex; gap: 24px; align-items: flex-end; padding: 12px 0; }
 .fd-eta-figure { display: flex; flex-direction: column; }
-.fd-eta-figure .fd-eta-cap { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; opacity: .55; }
+.fd-eta-figure .fd-eta-cap { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .fd-eta-figure .fd-eta-big { font-size: 22px; font-variant-numeric: tabular-nums; }
-.fd-eta-figure.blocked .fd-eta-big { color: #d9822b; }
+.fd-eta-figure.blocked .fd-eta-big { color: var(--magenta); text-shadow: 0 0 8px #ff2d9544; }
 /* scoped log viewer (S3.5) */
 .fd-log { font-family: ui-monospace, monospace; font-size: 12px; }
 .fd-log-line { padding: 2px 0; border-bottom: 1px solid var(--line); white-space: pre-wrap; }
-.fd-log-line.is-anchored { background: #f59e0b22; border-left: 3px solid #d9822b; padding-left: 6px; scroll-margin-top: 40px; }
-.fd-log-anchor-ref { font-size: 11px; opacity: .7; border: 1px solid #d9822b; border-radius: 6px; padding: 1px 6px; }
-.fd-log-empty { opacity: .55; }
+.fd-log-line.is-anchored { background: #ffb20026; border-left: 3px solid var(--amber); padding-left: 6px; scroll-margin-top: 40px; }
+.fd-log-anchor-ref { font-size: 11px; color: var(--muted); border: 1px solid var(--amber); border-radius: 6px; padding: 1px 6px; }
+.fd-log-empty { color: var(--muted); }
 `;
 
 // Scroll the logRef-anchored line into view on the scoped log page. No framework —
@@ -262,9 +278,17 @@ const CLIENT_SCRIPT = `
     try {
       var data = JSON.parse(e.data);
       if (data && typeof data.board === 'string') {
+        // Preserve concern-queue scroll across the swap (#10): innerHTML recreates
+        // the .fd-concern-rows container, which would reset scrollTop to 0 on every
+        // ingest — precisely when >6 concerns make the queue scrollable. Same
+        // capture/re-apply pattern as expandOverride/laneLayout above.
+        var rowsEl = board.querySelector('.fd-concern-rows');
+        var rowsScroll = rowsEl ? rowsEl.scrollTop : 0;
         board.innerHTML = data.board;
         loadedAt = Date.now();
         applyPrefs();
+        rowsEl = board.querySelector('.fd-concern-rows');
+        if (rowsEl && rowsScroll > 0) rowsEl.scrollTop = rowsScroll;
       }
     } catch (err) { /* ignore malformed frame */ }
   }
