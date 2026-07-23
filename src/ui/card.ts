@@ -15,7 +15,7 @@ import type { ActivityMetrics } from "../metrics.ts";
 import type { EtaResult } from "../eta.ts";
 import type { ActivityStatus, ActivityType, ActivityView } from "../fold.ts";
 import { renderEtaStrip } from "./eta_strip.ts";
-import { escapeHtml, formatDuration, formatMetricValue } from "./format.ts";
+import { escapeHtml, formatDuration, formatMetricValue, shortName } from "./format.ts";
 
 /** Everything a card needs, assembled from the store's fold + derivations. */
 export interface CardModel {
@@ -84,6 +84,11 @@ export function renderCard(model: CardModel, opts?: { expanded?: boolean }): str
     view.openConcerns > 0
       ? `<span class="fd-chip fd-chip-concern" title="open concerns">⚑ ${view.openConcerns}</span>`
       : "";
+  // Title precedence (#10): the working agent's Dev-Name when the activity has
+  // one, else the SHORT project name (basename — never the full forge path).
+  // The untouched full value stays on the hover title either way.
+  const fullName = view.label ?? view.activityId;
+  const displayName = view.agent ?? shortName(fullName);
 
   return (
     `<article class="fd-card" data-activity-id="${escapeHtml(view.activityId)}" ` +
@@ -91,7 +96,7 @@ export function renderCard(model: CardModel, opts?: { expanded?: boolean }): str
     `data-expanded="${expanded ? "true" : "false"}">` +
     // header
     `<header class="fd-card-head">` +
-    `<span class="fd-card-title">${escapeHtml(view.label ?? view.activityId)}</span>` +
+    `<span class="fd-card-title" title="${escapeHtml(fullName)}">${escapeHtml(displayName)}</span>` +
     `<span class="fd-badge fd-badge-type">${escapeHtml(view.activityType)}</span>` +
     `<span class="fd-badge fd-badge-status" data-status="${escapeHtml(view.status)}">${escapeHtml(
       STATUS_TEXT[view.status],

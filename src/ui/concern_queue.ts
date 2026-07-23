@@ -14,7 +14,7 @@
 // of the single fold.
 
 import type { ActivityStatus, ActivityType, ActivityView, Concern } from "../fold.ts";
-import { escapeHtml } from "./format.ts";
+import { escapeHtml, shortName } from "./format.ts";
 
 export interface ConcernQueueEntry {
   activityId: string;
@@ -91,7 +91,9 @@ export function scopeHref(entry: ConcernQueueEntry): string {
 
 function entryRow(entry: ConcernQueueEntry): string {
   const c = entry.concern;
-  const title = entry.activityLabel ?? entry.activityId;
+  // Short project name (#10) — the full value survives on the hover title.
+  const fullTitle = entry.activityLabel ?? entry.activityId;
+  const title = shortName(fullTitle);
   return (
     `<div class="fd-concern-row${entry.stalled ? " is-stalled" : ""}" data-activity-id="${escapeHtml(
       entry.activityId,
@@ -99,7 +101,7 @@ function entryRow(entry: ConcernQueueEntry): string {
     `<span class="fd-concern-kind" data-kind="${escapeHtml(c.concernKind)}">${escapeHtml(c.concernKind)}</span>` +
     `<span class="fd-concern-source">${escapeHtml(c.source)}</span>` +
     (entry.stalled ? `<span class="fd-concern-stalled" title="stalled with open concerns">⏳ stalled</span>` : "") +
-    `<span class="fd-concern-activity">${escapeHtml(title)}</span>` +
+    `<span class="fd-concern-activity" title="${escapeHtml(fullTitle)}">${escapeHtml(title)}</span>` +
     (c.label ? `<span class="fd-concern-label">${escapeHtml(c.label)}</span>` : "") +
     `<a class="fd-scope-link" href="${escapeHtml(scopeHref(entry))}">${escapeHtml(scopeLabel(entry))}</a>` +
     `</div>`
@@ -114,7 +116,9 @@ export function renderConcernQueue(entries: ConcernQueueEntry[]): string {
   return (
     `<section class="fd-concerns">` +
     `<h2>Concern queue <span class="fd-concern-count">${entries.length}</span></h2>` +
-    entries.map(entryRow).join("") +
+    // Rows live in their own scroll container (#10): capped at ~6 visible rows by
+    // CSS, overflow scrolls. Every row stays in the DOM — scroll, never truncate.
+    `<div class="fd-concern-rows">${entries.map(entryRow).join("")}</div>` +
     `</section>`
   );
 }
