@@ -165,6 +165,11 @@ main { padding: 16px; }
 /* global concern queue (S3.3) — sits between Active and Idle (#10) */
 .fd-concerns { border: 1px solid #ff386066; border-radius: var(--radius); padding: 12px; margin-bottom: 20px; background: #ff38600a; box-shadow: 0 0 14px #ff386011; }
 .fd-concerns h2 { font-size: 13px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .05em; color: var(--red); text-shadow: 0 0 8px #ff386044; }
+/* clear-all seen-watermark (#12): header row + dimmed seen rows (client-only state) */
+.fd-concerns-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.fd-concerns-head h2 { margin: 0; }
+.fd-concern-clear:hover { border-color: var(--red); color: var(--red); }
+.fd-concern-row.is-seen { opacity: .35; }
 /* scrollable rows container (#10): ~6 rows visible (row ≈ 31px), scroll — never truncate */
 .fd-concern-rows { max-height: 188px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 .fd-concern-rows::-webkit-scrollbar { width: 8px; }
@@ -212,6 +217,24 @@ const CLIENT_SCRIPT = `
   if (!board) return;
   var expandOverride = {}; // activityId -> 'true' | 'false'
   var laneLayout = {};     // lane -> 'cards' | 'table'
+  // Concern seen-watermark (#12): an ISO ts in localStorage. Rows at-or-before it
+  // dim (.is-seen); newer concerns render bright. Client-only presentation state —
+  // nothing is deleted, other viewers are unaffected. localStorage (not the
+  // in-memory prefs) so a clear survives reloads; a clear that forgets on refresh
+  // would be useless.
+  var CONCERN_SEEN_KEY = 'fd-concern-seen-watermark';
+
+  function applyConcernWatermark() {
+    var wm = '';
+    try { wm = localStorage.getItem(CONCERN_SEEN_KEY) || ''; } catch (e) { /* storage blocked ⇒ no-op */ }
+    if (!wm) return;
+    var rows = board.querySelectorAll('.fd-concern-row[data-ts]');
+    for (var i = 0; i < rows.length; i++) {
+      var ts = rows[i].getAttribute('data-ts') || '';
+      if (ts && ts <= wm) rows[i].classList.add('is-seen');
+      else rows[i].classList.remove('is-seen');
+    }
+  }
 
   function applyPrefs() {
     var cards = board.querySelectorAll('.fd-card');
@@ -228,7 +251,9 @@ const CLIENT_SCRIPT = `
         lanes[j].setAttribute('data-layout', laneLayout[lane]);
       }
     }
+    applyConcernWatermark(); // re-dim after every SSE swap (#12)
   }
+  applyConcernWatermark(); // and once on the initial server render
 
   document.addEventListener('click', function (ev) {
     var t = ev.target;
@@ -252,6 +277,26 @@ const CLIENT_SCRIPT = `
         var nl = laneEl.getAttribute('data-layout') === 'cards' ? 'table' : 'cards';
         laneEl.setAttribute('data-layout', nl);
         laneLayout[lane] = nl;
+      }
+      return;
+    }
+    var clearBtn = t.closest('[data-action="clear-concerns"]');
+    if (clearBtn) {
+      // Watermark = the newest concern currently rendered (ISO strings compare
+      // lexicographically). Everything at-or-before it dims; new arrivals pop.
+      var rows = board.querySelectorAll('.fd-concern-row[data-ts]');
+      var max = '';
+      for (var k = 0; k < rows.length; k++) {
+        var rts = rows[k].getAttribute('data-ts') || '';
+        if (rts > max) max = rts;
+      }
+      // Monotonic (review): a stale tab (dropped SSE, replayed log) renders an
+      // older max — never let its click move the stored watermark backwards.
+      var stored = '';
+      try { stored = localStorage.getItem(CONCERN_SEEN_KEY) || ''; } catch (e) { /* storage blocked */ }
+      if (max && max > stored) {
+        try { localStorage.setItem(CONCERN_SEEN_KEY, max); } catch (e) { /* storage blocked ⇒ session-only no-op */ }
+        applyConcernWatermark();
       }
       return;
     }
