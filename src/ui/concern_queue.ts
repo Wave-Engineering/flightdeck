@@ -95,9 +95,11 @@ function entryRow(entry: ConcernQueueEntry): string {
   const fullTitle = entry.activityLabel ?? entry.activityId;
   const title = shortName(fullTitle);
   return (
+    // data-ts (#12): the concern's ISO-8601 ts rides the row so the client-side
+    // seen-watermark can compare lexicographically (chronological for this format).
     `<div class="fd-concern-row${entry.stalled ? " is-stalled" : ""}" data-activity-id="${escapeHtml(
       entry.activityId,
-    )}">` +
+    )}" data-ts="${escapeHtml(c.ts)}">` +
     `<span class="fd-concern-kind" data-kind="${escapeHtml(c.concernKind)}">${escapeHtml(c.concernKind)}</span>` +
     `<span class="fd-concern-source">${escapeHtml(c.source)}</span>` +
     (entry.stalled ? `<span class="fd-concern-stalled" title="stalled with open concerns">⏳ stalled</span>` : "") +
@@ -115,7 +117,14 @@ export function renderConcernQueue(entries: ConcernQueueEntry[]): string {
   }
   return (
     `<section class="fd-concerns">` +
+    // Clear (#12) is a per-operator SEEN WATERMARK, not a deletion: the queue is
+    // the audit centerpiece (R-20/R-21) — concerns never vanish; they dim in THIS
+    // browser and anything newer than the click renders at full strength.
+    `<div class="fd-concerns-head">` +
     `<h2>Concern queue <span class="fd-concern-count">${entries.length}</span></h2>` +
+    `<button class="fd-lane-toggle fd-concern-clear" data-action="clear-concerns" ` +
+    `title="mark all current concerns seen (this browser only)">clear</button>` +
+    `</div>` +
     // Rows live in their own scroll container (#10): capped at ~6 visible rows by
     // CSS, overflow scrolls. Every row stays in the DOM — scroll, never truncate.
     `<div class="fd-concern-rows">${entries.map(entryRow).join("")}</div>` +
