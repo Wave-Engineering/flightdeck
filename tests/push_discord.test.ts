@@ -151,6 +151,29 @@ describe("fires once on the stale transition + de-dupe", () => {
     await flush();
     expect(calls).toHaveLength(0);
   });
+
+  test("a stale session never alerts — presence, not incomplete work (#7)", async () => {
+    const { post, calls } = spyTransport();
+    const n = new StalenessNotifier({ post, config: CONFIGURED, staleMs: THRESHOLD });
+    const session = foldActivity([
+      ev({ kind: "step", activityId: "session:idle-one", ts: T0, phase: "session", agent: "malory", label: "session-idle" }),
+    ]);
+    n.tick([session], NOW + THRESHOLD * 10);
+    await flush();
+    expect(calls).toHaveLength(0);
+  });
+
+  test("a stale synthetic activity never alerts — smoke tests must not page (#7)", async () => {
+    const { post, calls } = spyTransport();
+    const n = new StalenessNotifier({ post, config: CONFIGURED, staleMs: THRESHOLD });
+    // The deploy/README.md smoke-test shape: activity_start, synthetic, never ended.
+    const smoke = foldActivity([
+      ev({ kind: "activity_start", activityId: "deploy-smoke-1", ts: T0, label: "deploy smoke test", detail: { synthetic: true } }),
+    ]);
+    n.tick([smoke], NOW + THRESHOLD * 10);
+    await flush();
+    expect(calls).toHaveLength(0);
+  });
 });
 
 describe("fire-and-forget never throws into the caller", () => {

@@ -129,6 +129,20 @@ The service is healthy when `GET /health` returns `{"ok":true}` (the image's
 `HEALTHCHECK` polls it). Point the emitters' `FLIGHTDECK_INGEST_URL` at the
 ingress host and confirm events land (`POST /ingest` → `202`).
 
+To smoke-test ingest end-to-end, ALWAYS mark the event synthetic (#7) — the board
+filters `detail.synthetic: true` activities, so a test event never masquerades as
+a real campaign in the closed lane:
+
+```sh
+curl -sS -X POST "https://<ingress-host>/ingest" \
+  -H "Authorization: Bearer $FLIGHTDECK_INGEST_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"kind":"activity_start","activityId":"deploy-smoke-'"$(date +%s)"'",
+       "ts":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","schemaVersion":1,
+       "label":"deploy smoke test","detail":{"synthetic":true}}'
+# expect: 202
+```
+
 ---
 
 ## SEAMS
