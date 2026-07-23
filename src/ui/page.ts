@@ -14,6 +14,7 @@
 
 import { computeEta } from "../eta.ts";
 import type { ActivityView } from "../fold.ts";
+import { LOGO_DATA_URI, ORG_NAME } from "./brand.ts";
 import { deriveMetrics } from "../metrics.ts";
 import type { Store } from "../store.ts";
 import { resolveStaleMs, stalenessPredicate } from "../watcher.ts";
@@ -119,6 +120,13 @@ const STYLES = `
 body { margin: 0; font: 14px/1.45 ui-sans-serif, system-ui, sans-serif; background: var(--bg); color: var(--ink); }
 .fd-topbar { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: linear-gradient(180deg, #10142688, transparent); }
 .fd-topbar h1 { font-size: 15px; margin: 0; letter-spacing: .08em; text-transform: uppercase; color: var(--cyan); text-shadow: 0 0 10px #00e5ff55; }
+/* Oak & Wave branding (#14): logo + gradient wordmark echoing the badge's cyan→magenta */
+.fd-logo { height: 32px; width: auto; display: block; filter: drop-shadow(0 0 6px #00e5ff33); }
+.fd-brand { font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--cyan); }
+@supports ((background-clip: text) or (-webkit-background-clip: text)) {
+  .fd-brand { background: linear-gradient(90deg, var(--cyan), var(--magenta)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+}
+.fd-brand-sep { color: var(--muted); opacity: .5; }
 .fd-live { font-size: 11px; color: var(--cyan); text-shadow: 0 0 6px #00e5ff77; }
 main { padding: 16px; }
 .fd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--gap); }
@@ -344,13 +352,30 @@ const CLIENT_SCRIPT = `
 })();
 `;
 
+/** Shared branded topbar (#14): O&W logo + wordmark + the FlightDeck product
+ *  title, then a page-specific tail (live dot / back link). Sits OUTSIDE `#board`,
+ *  so SSE swaps never resend the inlined logo bytes. */
+function renderTopbar(tail: string): string {
+  return (
+    `<div class="fd-topbar">` +
+    // alt="" — decorative: the wordmark span right after it carries the name, so
+    // assistive tech reads "Oak & Wave" once, not "Oak & Wave logo, Oak & Wave".
+    `<img class="fd-logo" src="${LOGO_DATA_URI}" alt="">` +
+    `<span class="fd-brand">${escapeHtml(ORG_NAME)}</span>` +
+    `<span class="fd-brand-sep">//</span>` +
+    `<h1>FlightDeck</h1>` +
+    tail +
+    `</div>`
+  );
+}
+
 /** The full standalone HTML document served at `/`. */
 export function renderPage(store: Store): string {
   return (
     `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
     `<title>FlightDeck</title><style>${STYLES}</style></head><body>` +
-    `<div class="fd-topbar"><h1>FlightDeck</h1><span class="fd-live">● live</span></div>` +
+    renderTopbar(`<span class="fd-live">● live</span>`) +
     `<main id="board">${renderBoard(store)}</main>` +
     `<script>${CLIENT_SCRIPT}</script>` +
     `</body></html>`
@@ -368,7 +393,7 @@ export function renderLogPage(store: Store, scope: LogScope, logRef?: string | n
     `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
     `<title>FlightDeck — log</title><style>${STYLES}</style></head><body>` +
-    `<div class="fd-topbar"><h1>FlightDeck</h1><a class="fd-scope-link" href="/">← board</a></div>` +
+    renderTopbar(`<a class="fd-scope-link" href="/">← board</a>`) +
     `<main>${viewer}</main>` +
     `<script>${LOG_SCROLL_SCRIPT}</script>` +
     `</body></html>`
