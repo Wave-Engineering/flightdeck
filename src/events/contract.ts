@@ -103,8 +103,12 @@ export interface FlightDeckEvent {
   unit?: string | null;
   concernKind?: ConcernKind;
   source?: ConcernSource;
-  // additive convention fields (activity_start): activityType, planTotal, cord
-  activityType?: "campaign" | "float";
+  // additive convention fields: activityType, planTotal, cord ride activity_start;
+  // "session" (#7 / cc-workflow#947) is stamped on EVERY session event so orphan
+  // steps classify too. `host` is the emitting machine — distinct from `agent`
+  // (Dev-Name); the S1.7 session hook emits both.
+  activityType?: "campaign" | "float" | "session";
+  host?: string | null;
   [key: string]: unknown;
 }
 

@@ -137,6 +137,75 @@ describe("foldActivity — float", () => {
   });
 });
 
+describe("foldActivity — session classification (#7 / cc-workflow#947)", () => {
+  test("legacy shape: phase 'session' with no activityType classifies as session", () => {
+    // EXACTLY the production shape flooding the deck (cc-workflow#947): the S1.7
+    // hook emits phase:"session" and no activityType. Assertion-liveness probe
+    // (#922): before the fix this folded to "campaign" (the default) — verified
+    // failing against unmodified fold.ts before implementing.
+    const v = foldActivity([
+      { kind: "activity_start", activityId: "session:aaa", ts: "2026-07-22T10:00:00Z", phase: "session", agent: "malory", label: "session-open" },
+      { kind: "step", activityId: "session:aaa", ts: "2026-07-22T10:05:00Z", phase: "session", agent: "malory", label: "session-idle" },
+    ]);
+    expect(v.activityType).toBe("session");
+  });
+
+  test("declared shape: activityType 'session' (new emitter) classifies as session", () => {
+    const v = foldActivity([
+      { kind: "activity_start", activityId: "session:bbb", ts: "2026-07-22T10:00:00Z", activityType: "session", phase: "session", agent: "babelfish", host: "malory", label: "session-open" },
+    ]);
+    expect(v.activityType).toBe("session");
+  });
+
+  test("orphan steps (no activity_start) with phase 'session' classify as session", () => {
+    // A session opened before the emitter installed has steps but no start event.
+    const v = foldActivity([
+      { kind: "step", activityId: "session:ccc", ts: "2026-07-22T10:05:00Z", phase: "session", agent: "malory", label: "session-idle" },
+    ]);
+    expect(v.activityType).toBe("session");
+  });
+
+  test("campaign/float classification is unchanged by a non-session phase", () => {
+    const v = foldActivity([
+      { kind: "activity_start", activityId: "f", ts: "t0", activityType: "float", detail: { cord: 3 } },
+      { kind: "phase", activityId: "f", ts: "t1", phase: "P1" },
+    ]);
+    expect(v.activityType).toBe("float");
+  });
+
+  test("host folds last-write-wins; absent host ⇒ null", () => {
+    const v = foldActivity([
+      { kind: "activity_start", activityId: "session:ddd", ts: "t0", activityType: "session", host: "malory" },
+      { kind: "step", activityId: "session:ddd", ts: "t1", host: "sterling" },
+    ]);
+    expect(v.host).toBe("sterling");
+    const bare = foldActivity([
+      { kind: "activity_start", activityId: "c", ts: "t0", activityType: "campaign" },
+    ]);
+    expect(bare.host).toBeNull();
+  });
+});
+
+describe("foldActivity — synthetic marker (#7)", () => {
+  test("detail.synthetic true on any event marks the activity synthetic", () => {
+    const v = foldActivity([
+      { kind: "activity_start", activityId: "e2e-smoke", ts: "t0", activityType: "campaign", detail: { synthetic: true } },
+      { kind: "step", activityId: "e2e-smoke", ts: "t1", label: "promoted", wave: "W1" },
+    ]);
+    expect(v.synthetic).toBe(true);
+    // marker on a later event (not just activity_start) also marks it
+    const late = foldActivity([
+      { kind: "activity_start", activityId: "smoke-2", ts: "t0", activityType: "campaign" },
+      { kind: "step", activityId: "smoke-2", ts: "t1", detail: { synthetic: true } },
+    ]);
+    expect(late.synthetic).toBe(true);
+  });
+
+  test("no marker ⇒ synthetic false (real activities unaffected)", () => {
+    expect(foldActivity(campaign).synthetic).toBe(false);
+  });
+});
+
 describe("foldActivity — honest token stub", () => {
   test("metric value null is preserved (never fabricated, #853 gate)", () => {
     const v = foldActivity([

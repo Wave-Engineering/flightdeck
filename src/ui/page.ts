@@ -13,6 +13,7 @@
 // nothing here recomputes status.
 
 import { computeEta } from "../eta.ts";
+import type { ActivityView } from "../fold.ts";
 import { deriveMetrics } from "../metrics.ts";
 import type { Store } from "../store.ts";
 import { resolveStaleMs, stalenessPredicate } from "../watcher.ts";
@@ -21,12 +22,15 @@ import { buildConcernQueue, renderConcernQueue } from "./concern_queue.ts";
 import { DEFAULT_LAYOUT, type Lane, laneFor, renderGrid } from "./grid.ts";
 import { escapeHtml } from "./format.ts";
 import { LOG_ANCHOR_ID, type LogScope, renderLogViewer } from "./log_viewer.ts";
+import { buildPresence, renderPresenceStrip } from "./presence.ts";
 import { renderTable } from "./table.ts";
 
-/** Build a CardModel per activity: folded view + its derived metrics + split ETA. */
-export function buildCardModels(store: Store): CardModel[] {
+/** Build a CardModel per activity: folded view + its derived metrics + split ETA.
+ *  `views` narrows which activities get models (#7: sessions/synthetic never need
+ *  metrics or an ETA); default remains every activity in the store. */
+export function buildCardModels(store: Store, views?: ActivityView[]): CardModel[] {
   const events = store.allEvents();
-  return store.getView().map((view) => {
+  return (views ?? store.getView()).map((view) => {
     const evs = events.filter((e) => e.activityId === view.activityId);
     const metrics = deriveMetrics(evs);
     const eta = computeEta(view, metrics);
@@ -72,13 +76,22 @@ function renderLane(lane: Lane, models: CardModel[]): string {
  * (R-21/R-22) — one predicate, injected here, so the pure fold stays clock-free.
  */
 export function renderBoard(store: Store, opts?: StalenessOpts): string {
-  const models = buildCardModels(store);
-  if (models.length === 0) return `<div class="fd-empty">no activities</div>`;
+  // Partition (#7): synthetic activities (test residue, `detail.synthetic`) are
+  // filtered off the board entirely; session activities render as the agent-presence
+  // strip, never as campaign cards; everything else goes to the lanes as before.
+  const visible = store.getView().filter((v) => !v.synthetic);
+  if (visible.length === 0) return `<div class="fd-empty">no activities</div>`;
+  const sessionViews = visible.filter((v) => v.activityType === "session");
+  const models = buildCardModels(store, visible.filter((v) => v.activityType !== "session"));
   const now = opts?.now ?? Date.now();
   const staleMs = opts?.staleMs ?? resolveStaleMs();
   const isStalled = stalenessPredicate(now, staleMs);
-  // Global concern queue (centerpiece) folds concerns across ALL activities; the P4
-  // predicate replaces the queue's default (blocked) with real wall-clock staleness.
+  const presence = renderPresenceStrip(buildPresence(sessionViews, { now, staleMs }));
+  // Global concern queue (centerpiece) folds concerns across all LANE activities —
+  // sessions and synthetic are deliberately excluded by the partition above (#7):
+  // sessions carry no concerns by construction, and synthetic residue must never
+  // surface in the queue. The P4 predicate replaces the queue's default (blocked)
+  // with real wall-clock staleness.
   const concerns = renderConcernQueue(
     buildConcernQueue(models.map((m) => m.view), { isStalled }),
   );
@@ -90,7 +103,7 @@ export function renderBoard(store: Store, opts?: StalenessOpts): string {
     else byLane.set(lane, [m]);
   }
   const lanes = LANE_ORDER.map((lane) => renderLane(lane, byLane.get(lane) ?? [])).join("");
-  return concerns + lanes;
+  return presence + concerns + lanes;
 }
 
 const STYLES = `
@@ -145,6 +158,15 @@ main { padding: 16px; }
 .fd-concern-kind { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); }
 .fd-scope-link { font-size: 12px; opacity: .8; text-decoration: none; border-bottom: 1px dotted currentColor; }
 .fd-empty { opacity: .55; }
+/* agent-presence strip (#7): sessions are presence chips, not campaign cards */
+.fd-presence { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 20px; }
+.fd-presence h2 { font-size: 13px; margin: 0; text-transform: uppercase; letter-spacing: .05em; opacity: .7; }
+.fd-presence-chip { display: inline-flex; gap: 6px; align-items: baseline; font-size: 12px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; }
+.fd-presence-chip[data-stale="true"] { color: #d9822b; border-color: #d9822b; }
+.fd-presence-agent { font-weight: 600; }
+.fd-presence-count { font-variant-numeric: tabular-nums; }
+.fd-presence-stalecount { color: #d9822b; }
+.fd-presence-host, .fd-presence-last { opacity: .6; }
 /* split-ETA headline strip (S3.4) */
 .fd-eta-strip { display: flex; gap: 24px; align-items: flex-end; padding: 12px 0; }
 .fd-eta-figure { display: flex; flex-direction: column; }

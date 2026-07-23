@@ -140,9 +140,16 @@ export class StalenessNotifier {
    * Evaluate every view at `now`; alert once on each entry into stale-but-incomplete,
    * and forget an activity once it is no longer stale (recovered or closed). Never
    * throws, never blocks — pushes are fired fire-and-forget.
+   *
+   * Sessions and synthetic activities are excluded HERE (#7, mirroring the board
+   * partition): an idle session is presence, not an incomplete campaign — alerting
+   * on it would relocate the cc-workflow#947 flood to the operator's phone — and
+   * synthetic test residue (e.g. the deploy smoke test) must never page anyone.
+   * Filtering inside tick() makes every caller safe, not just server.ts.
    */
   tick(views: ActivityView[], now: number): void {
     for (const view of views) {
+      if (view.synthetic || view.activityType === "session") continue;
       const stale = isStalled(view, now, this.staleMs);
       const alreadyAlerted = this.alerted.has(view.activityId);
       if (stale && !alreadyAlerted) {

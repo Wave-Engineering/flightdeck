@@ -23,7 +23,9 @@
 
 import type { FlightDeckEvent } from "./events/contract.ts";
 
-export type ActivityType = "campaign" | "float";
+/** "session" (#7 / cc-workflow#947): agent presence, not work — rendered in the
+ *  presence strip, never as a campaign/float card. */
+export type ActivityType = "campaign" | "float" | "session";
 
 /** Derived lifecycle state. `closed` is computed HERE and nowhere else. */
 export type ActivityStatus = "active" | "blocked" | "ci-wait" | "closed";
@@ -64,6 +66,11 @@ export interface ActivityView {
   currentWave: string | null;
   currentFlight: string | number | null;
   agent: string | null;
+  /** Emitting host (additive convention, #7) — distinct from `agent` (Dev-Name). */
+  host: string | null;
+  /** True iff any event carried `detail.synthetic === true` — test residue the
+   *  board must be able to filter (#7, defect 3 of cc-workflow#947). */
+  synthetic: boolean;
   // progress
   planTotal: number | null; // campaign wave denominator
   completed: number; // landed/promoted campaign waves
@@ -109,6 +116,8 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
     currentWave: null,
     currentFlight: null,
     agent: null,
+    host: null,
+    synthetic: false,
     planTotal: null,
     completed: 0,
     cord: null,
@@ -121,6 +130,7 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
 
   let lastStateBearingKind: string | null = null;
   let ended = false;
+  let isSession = false;
 
   for (const e of events) {
     v.lastEventTs = e.ts;
@@ -130,8 +140,22 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
     if (typeof e.wave === "string") v.currentWave = e.wave;
     if (e.flight !== null && e.flight !== undefined) v.currentFlight = e.flight;
     if (typeof e.agent === "string") v.agent = e.agent;
+    const host = e["host"];
+    if (typeof host === "string") v.host = host;
     // NB: the display label comes ONLY from activity_start (below). `step` labels
     // like "promoted"/"leg" are structural markers, not the card's name.
+
+    // Session classification (#7): declared `activityType: "session"` on ANY event
+    // (the new emitter stamps every session event), or the legacy S1.7 shape
+    // `phase: "session"` with no activityType — covers pre-fix log events, incl.
+    // orphan steps whose activity_start predates the emitter. Checked on every
+    // event (not just activity_start) so a re-fold reclassifies history.
+    if (e.activityType === "session" || e.phase === "session") isSession = true;
+
+    // Synthetic marker (#7): any event carrying `detail.synthetic === true` marks
+    // the whole activity as test residue the board can filter.
+    const detail = asRecord(e.detail);
+    if (detail && detail["synthetic"] === true) v.synthetic = true;
 
     if (STATE_BEARING.has(e.kind)) lastStateBearingKind = e.kind;
 
@@ -204,6 +228,10 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
 
   // Started may be absent if no activity_start event was seen — fall back to first ts.
   if (v.startedAt === null) v.startedAt = first.ts;
+
+  // A session marker anywhere wins over the campaign default (and over a declared
+  // campaign/float — a session event stream is presence by definition).
+  if (isSession) v.activityType = "session";
 
   // Status is derived HERE — the single code path that computes "closed".
   if (ended) {

@@ -1,7 +1,10 @@
 // Global concern queue — THE centerpiece (Dev Spec R-20 / R-21 / PC-6 / S3.3 / #867).
 //
-// Every `concern` event, from EVERY activity, folds into ONE global queue so the
-// operator has a single place to cycle back on papered-over decisions. Each entry
+// Every `concern` event, from every LANE activity, folds into ONE global queue so
+// the operator has a single place to cycle back on papered-over decisions. (Session
+// and synthetic activities are partitioned out upstream in page.ts (#7) — sessions
+// carry no concerns by construction, synthetic residue must never surface here.)
+// Each entry
 // links to its exact Phase / Wave / Flight / Leg scope (via the concern's own scope
 // tags + logRef), and activities that are stalled with open concerns sort to the top
 // (R-21) — the thing most likely to need a human is surfaced first.
