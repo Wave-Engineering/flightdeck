@@ -115,6 +115,59 @@ describe("R-14 vitals row + expandable metrics grid", () => {
   });
 });
 
+describe("card header — dev-name title + granular action status (cc#1026)", () => {
+  const PROJECT = "github.com/Wave-Engineering/blueshift";
+
+  test("title is the agent Dev-Name when present; full project stays on hover (AC1)", () => {
+    const m = model([
+      ev({ kind: "activity_start", activityId: "c1", ts: "2026-07-07T10:00:00Z", activityType: "campaign", label: PROJECT, detail: { planTotal: 7 }, agent: "babelfish" }),
+      ev({ kind: "step", activityId: "c1", ts: "2026-07-07T10:05:00Z", label: "promoted", wave: "1", agent: "babelfish" }),
+    ]);
+    const html = renderCard(m);
+    expect(html).toContain(">babelfish<"); // dev-name is the visible title
+    expect(html).toContain(`title="${PROJECT}"`); // untouched full name on hover
+  });
+
+  test("title falls back to the SHORT project name (basename) when no agent (AC1)", () => {
+    const m = model([
+      ev({ kind: "activity_start", activityId: "c2", ts: "2026-07-07T10:00:00Z", activityType: "campaign", label: PROJECT, detail: { planTotal: 7 } }),
+    ]);
+    const html = renderCard(m);
+    expect(html).toContain(">blueshift<"); // short basename, never the full forge path
+    expect(html).not.toContain(`>${PROJECT}<`);
+  });
+
+  test("status badge shows the granular action while active, not the coarse 'active' (AC3)", () => {
+    const m = model([
+      ev({ kind: "activity_start", activityId: "c3", ts: "2026-07-07T10:00:00Z", activityType: "campaign", detail: { planTotal: 7 }, agent: "babelfish" }),
+      ev({ kind: "step", activityId: "c3", ts: "2026-07-07T10:05:00Z", label: "promoted", wave: "1" }),
+      ev({ kind: "step", activityId: "c3", ts: "2026-07-07T10:06:00Z", action: "promoting", wave: "2" }),
+    ]);
+    const html = renderCard(m);
+    expect(html).toContain(">promoting<"); // granular action is the status text
+    expect(html).toContain('data-status="active"'); // raw lifecycle preserved for lane logic
+    expect(html).not.toContain(">active<"); // coarse badge text replaced
+  });
+
+  test("hyphenated actions display with spaces (AC3)", () => {
+    const m = model([
+      ev({ kind: "activity_start", activityId: "c4", ts: "2026-07-07T10:00:00Z", activityType: "campaign", detail: { planTotal: 7 } }),
+      ev({ kind: "step", activityId: "c4", ts: "2026-07-07T10:06:00Z", action: "awaiting-verdict" }),
+    ]);
+    expect(renderCard(m)).toContain(">awaiting verdict<");
+  });
+
+  test("blocked keeps the human lifecycle text, not the raw action (AC3)", () => {
+    const m = model([
+      ev({ kind: "activity_start", activityId: "c5", ts: "2026-07-07T10:00:00Z", activityType: "campaign", detail: { planTotal: 7 } }),
+      ev({ kind: "blocked_on_human", activityId: "c5", ts: "2026-07-07T10:06:00Z", action: "waiting-on-meatbag" }),
+    ]);
+    const html = renderCard(m);
+    expect(html).toContain(">blocked on you<");
+    expect(html).toContain('data-status="blocked"');
+  });
+});
+
 describe("card grid (default multi-activity view, R-12)", () => {
   test("N models render N cards", () => {
     const html = renderGrid([campaignModel("a"), floatModel("b"), campaignModel("c")]);

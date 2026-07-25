@@ -56,6 +56,36 @@ describe("foldActivity — campaign", () => {
     expect(v.status).toBe("blocked");
   });
 
+  test("currentAction latches the last ACTIVE-lane action; block/ci actions don't (AC3, cc#1026)", () => {
+    // The only active-lane (step/phase) action in the stream is the "planning" phase;
+    // the trailing blocked_on_human ("waiting-on-meatbag") owns the lifecycle status
+    // instead, so it must NOT latch into currentAction (that would show a block action
+    // on a card that later re-activates). Metrics/concerns carry no action either.
+    expect(v.currentAction).toBe("planning");
+    expect(v.status).toBe("blocked");
+  });
+
+  test("a re-activated card shows the last active action, not a stale block (AC3, cc#1026)", () => {
+    // promoting (active) → hold (block) → action-less promoted step re-activates the card.
+    // status returns to active; currentAction must still read "promoting", never "hold".
+    const w = foldActivity([
+      { kind: "activity_start", activityId: "s", ts: "2026-07-07T10:00:00Z", activityType: "campaign", detail: { planTotal: 3 } },
+      { kind: "step", activityId: "s", ts: "2026-07-07T10:01:00Z", action: "promoting", wave: "1" },
+      { kind: "blocked_on_human", activityId: "s", ts: "2026-07-07T10:02:00Z", action: "hold" },
+      { kind: "step", activityId: "s", ts: "2026-07-07T10:03:00Z", label: "promoted", wave: "1" },
+    ] as FlightDeckEvent[]);
+    expect(w.status).toBe("active");
+    expect(w.currentAction).toBe("promoting");
+  });
+
+  test("currentAction is null when no event carries an active-lane action (AC3, cc#1026)", () => {
+    const bare = foldActivity([
+      { kind: "activity_start", activityId: "x", ts: "2026-07-07T10:00:00Z", activityType: "campaign", detail: { planTotal: 3 } },
+      { kind: "step", activityId: "x", ts: "2026-07-07T10:05:00Z", label: "promoted", wave: "1" },
+    ] as FlightDeckEvent[]);
+    expect(bare.currentAction).toBeNull();
+  });
+
   test("timestamps", () => {
     expect(v.startedAt).toBe("2026-07-07T10:00:00Z");
     expect(v.endedAt).toBeNull();
