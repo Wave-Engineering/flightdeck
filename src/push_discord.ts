@@ -90,7 +90,7 @@ function humanizeMs(ms: number): string {
 
 /** The alert body for a newly-stale activity. Pure over (view, now). */
 export function alertText(view: ActivityView, now: number): string {
-  const name = view.label ?? view.activityId;
+  const name = view.agent ?? view.label ?? view.activityId;
   const age = ageMs(view, now);
   const idleFor = age === null ? "a while" : humanizeMs(age);
   const scope = view.currentPhase

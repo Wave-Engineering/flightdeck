@@ -66,6 +66,9 @@ export interface ActivityView {
   currentWave: string | null;
   currentFlight: string | number | null;
   agent: string | null;
+  /** Granular action ("promoting"/"awaiting-verdict"/…) from the last event carrying
+   *  one — the status the console shows instead of the coarse lifecycle (AC3, cc#1026). */
+  currentAction: string | null;
   /** Emitting host (additive convention, #7) — distinct from `agent` (Dev-Name). */
   host: string | null;
   /** True iff any event carried `detail.synthetic === true` — test residue the
@@ -116,6 +119,7 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
     currentWave: null,
     currentFlight: null,
     agent: null,
+    currentAction: null,
     host: null,
     synthetic: false,
     planTotal: null,
@@ -140,6 +144,15 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
     if (typeof e.wave === "string") v.currentWave = e.wave;
     if (e.flight !== null && e.flight !== undefined) v.currentFlight = e.flight;
     if (typeof e.agent === "string") v.agent = e.agent;
+    // Granular action, last-write-wins (AC3): latch ONLY active-lane actions (step/phase
+    // — "promoting"/"launching"/"awaiting-verdict"/"planning"/…). Block/ci actions
+    // ("hold"/"waiting-on-meatbag"/"waiting-ci") arrive as blocked_on_human/ci_wait kinds
+    // and already own the lifecycle status text; latching them would let a stale block
+    // action surface on a later re-activated card (status flips back to active via an
+    // action-less `promoted` step, but currentAction would still read "hold").
+    if ((e.kind === "step" || e.kind === "phase") && typeof e.action === "string" && e.action.length > 0) {
+      v.currentAction = e.action;
+    }
     const host = e["host"];
     if (typeof host === "string") v.host = host;
     // NB: the display label comes ONLY from activity_start (below). `step` labels

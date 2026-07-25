@@ -198,6 +198,12 @@ describe("alertText + default transport shape", () => {
     expect(text).toContain("not complete");
   });
 
+  test("stale-alert names the agent Dev-Name when present, not the project (AC1 consistency, cc#1026)", () => {
+    const view = openView("Blueshift", T0, { agent: "babelfish" } as Partial<FlightDeckEvent>);
+    const text = alertText(view, NOW + 20 * 60 * 1000);
+    expect(text).toContain("babelfish"); // agent Dev-Name wins over the project label
+  });
+
   test("createDiscordTransport returns a function without performing any I/O", () => {
     // Constructing the transport must NOT touch the network — only invoking it would.
     const post = createDiscordTransport(CONFIGURED);

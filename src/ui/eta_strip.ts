@@ -21,11 +21,18 @@ export function renderEtaStrip(eta: EtaResult, opts?: { variant?: "headline" | "
   const variant = opts?.variant ?? "headline";
   const machine = formatDuration(eta.machineTimeRemainingMs);
   const blocked = formatDuration(eta.blockedOnYouMs);
+  // AC6 (cc#1026): the machine figure is null until there's a completed wave to set a
+  // rate — render it as "—" (formatDuration) but carry the REASON on the hover title so
+  // the N/A is explicit, not a mystery dash.
+  const machineTitle =
+    eta.machineTimeRemainingMs === null
+      ? "machine-time remaining: not yet estimable — no completed wave to set a rate"
+      : "machine-time remaining";
 
   if (variant === "inline") {
     return (
       `<span class="fd-eta" data-eta-kind="${escapeHtml(eta.kind)}">` +
-      `<span class="fd-eta-machine" title="machine-time remaining">⚙ ${escapeHtml(machine)}</span>` +
+      `<span class="fd-eta-machine" title="${escapeHtml(machineTitle)}">⚙ ${escapeHtml(machine)}</span>` +
       `<span class="fd-eta-blocked" data-blocked-ms="${eta.blockedOnYouMs}" title="blocked on you">` +
       `⏳ ${escapeHtml(blocked)}</span>` +
       `</span>`
@@ -36,7 +43,7 @@ export function renderEtaStrip(eta: EtaResult, opts?: { variant?: "headline" | "
     `<div class="fd-eta-strip" data-eta-kind="${escapeHtml(eta.kind)}">` +
     `<div class="fd-eta-figure machine">` +
     `<span class="fd-eta-cap">machine time remaining</span>` +
-    `<span class="fd-eta-big fd-eta-machine">${escapeHtml(machine)}</span>` +
+    `<span class="fd-eta-big fd-eta-machine" title="${escapeHtml(machineTitle)}">${escapeHtml(machine)}</span>` +
     `</div>` +
     `<div class="fd-eta-figure blocked">` +
     `<span class="fd-eta-cap">blocked on you</span>` +

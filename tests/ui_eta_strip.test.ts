@@ -44,6 +44,18 @@ describe("honest unknowns and no merging", () => {
     expect(html).toContain("2m"); // blocked still shown
     expect((html.match(/fd-eta-figure/g) ?? []).length).toBe(2); // still two figures
   });
+
+  test("null machine-time carries an explicit reason on the title, not a mystery dash (AC6, cc#1026)", () => {
+    const eta: EtaResult = { ...campaignEta, machineTimeRemainingMs: null };
+    expect(renderEtaStrip(eta)).toContain("not yet estimable"); // the N/A reason
+    expect(renderEtaStrip(eta, { variant: "inline" })).toContain("not yet estimable");
+  });
+
+  test("a present machine-time uses the plain title, no reason (AC6, cc#1026)", () => {
+    const html = renderEtaStrip(campaignEta, { variant: "inline" });
+    expect(html).toContain('title="machine-time remaining"');
+    expect(html).not.toContain("not yet estimable");
+  });
 });
 
 describe("inline variant (card vitals)", () => {
