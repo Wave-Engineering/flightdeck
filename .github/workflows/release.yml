@@ -48,11 +48,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: oakandwave
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Derive tags + labels
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE }}
+          # Dual-registry during the GHCR -> Docker Hub migration (#18): tag + push both.
+          images: |
+            ${{ env.IMAGE }}
+            docker.io/oakandwave/flightdeck
+          # Force the OCI source/url labels lowercase (the org login "Wave-Engineering"
+          # would otherwise bake a capital via metadata-action's auto-source).
+          labels: |
+            org.opencontainers.image.source=https://github.com/wave-engineering/flightdeck
+            org.opencontainers.image.url=https://github.com/wave-engineering/flightdeck
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
