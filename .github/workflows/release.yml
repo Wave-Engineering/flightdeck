@@ -82,3 +82,14 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Docker Scout — CVE scan the pushed image
+        # Scans the actual image layers for known CVEs (complements trivy's dep scan).
+        # Non-blocking for now: reports to the job summary, never fails the release; make
+        # it a gate later with `exit-code: true` once the baseline is clean.
+        uses: docker/scout-action@v1
+        with:
+          command: cves
+          image: docker.io/oakandwave/flightdeck:${{ steps.meta.outputs.version }}
+          only-severities: critical,high
+          write-comment: false
