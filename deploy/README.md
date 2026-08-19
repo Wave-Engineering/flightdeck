@@ -125,9 +125,34 @@ docker stack services flightdeck
 docker service logs -f flightdeck_flightdeck   # expect: "[flightdeck] listening on ..."
 ```
 
-The service is healthy when `GET /health` returns `{"ok":true}` (the image's
-`HEALTHCHECK` polls it). Point the emitters' `FLIGHTDECK_INGEST_URL` at the
-ingress host and confirm events land (`POST /ingest` → `202`).
+The service is healthy when `GET /health` returns `"ok": true` (the image's
+`HEALTHCHECK` polls it — it acts only on `ok`). Point the emitters'
+`FLIGHTDECK_INGEST_URL` at the ingress host and confirm events land
+(`POST /ingest` → `202`).
+
+### Which build is deployed? (#24)
+
+`/health` reports the running image's build identity, so triage never has to
+guess or shell into the manager node:
+
+```sh
+curl -s https://<ingress-host>/health
+# {"ok":true,"version":"0.2.8","gitSha":"<full sha>","startedAt":"<iso-8601>"}
+```
+
+The same version is shown in the UI topbar (right-hand side), with the full SHA
+and process start in its tooltip — so an operator reporting a problem can state
+the build without any shell access at all.
+
+`version` is the semver-stripped git tag baked in at image build time, **not**
+whatever is in the source tree. A `dev` / `unknown` reading means the image was
+built outside the release workflow. The release workflow refuses to publish a
+tag that disagrees with `package.json` (`scripts/ci/check-version.sh`), so the
+reported version cannot silently drift from the tag the way it did through
+v0.2.0–v0.2.7.
+
+`startedAt` is the process start, not the deploy time — if it is recent but you
+did not deploy, the container restarted on its own.
 
 To smoke-test ingest end-to-end, ALWAYS mark the event synthetic (#7) — the board
 filters `detail.synthetic: true` activities, so a test event never masquerades as

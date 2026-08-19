@@ -24,10 +24,19 @@ RUN mkdir -p node_modules && bun install --frozen-lockfile --production
 # ── Stage 2: runtime ────────────────────────────────────────────────────────
 FROM oven/bun:1.3.11-slim AS runtime
 
+# Build identity (#24). Fed by the release workflow from the git tag + SHA and
+# baked as ENV so the RUNNING service can report which image it is — the one
+# fact that separates "stale deployment" from "genuine defect" during triage.
+# Defaults keep a plain `docker build .` honest rather than claiming a release.
+ARG FLIGHTDECK_VERSION=dev
+ARG FLIGHTDECK_GIT_SHA=unknown
+
 # Defaults are safe for a container: bind 0.0.0.0:8080 and keep the append-only
 # event log + SQLite materialized view on the persistent /data volume (below),
 # never in an image layer. Every value is overridable at deploy time.
-ENV NODE_ENV=production \
+ENV FLIGHTDECK_VERSION=${FLIGHTDECK_VERSION} \
+    FLIGHTDECK_GIT_SHA=${FLIGHTDECK_GIT_SHA} \
+    NODE_ENV=production \
     PORT=8080 \
     FLIGHTDECK_LOG_PATH=/data/events.jsonl \
     FLIGHTDECK_DB_PATH=/data/flightdeck.db
@@ -57,8 +66,10 @@ USER bun
 
 EXPOSE 8080
 
-# Liveness: the service exposes GET /health -> {ok:true}. Uses bun (already on
-# PATH) so no curl/wget is needed in the slim image.
+# Liveness: the service exposes GET /health -> {ok:true, version, gitSha,
+# startedAt} (#24). The probe only checks res.ok, so the added fields do not
+# change the healthcheck contract. Uses bun (already on PATH) so no curl/wget
+# is needed in the slim image.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD bun -e "fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
