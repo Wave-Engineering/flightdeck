@@ -114,13 +114,23 @@ describe("POST /ingest validation", () => {
 });
 
 describe("routing", () => {
-  test("GET /health → 200 {ok}", async () => {
+  test("GET /health → 200, ok:true plus build identity (#24)", async () => {
     const res = await handleRequest(
       new Request("http://fd.local/health", { method: "GET" }),
       cfg,
     );
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
+    // `ok` remains the liveness contract the container HEALTHCHECK depends on;
+    // #24 widened the body with build identity so triage can read the deployed
+    // version from the console. Assert the invariant plus the added keys rather
+    // than an exact shape, so a future additive field is not a false failure —
+    // but keep `ok` pinned to true, which is the part the probe acts on.
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body["ok"]).toBe(true);
+    expect(typeof body["version"]).toBe("string");
+    expect((body["version"] as string).length).toBeGreaterThan(0);
+    expect(typeof body["gitSha"]).toBe("string");
+    expect(Number.isNaN(Date.parse(body["startedAt"] as string))).toBe(false);
   });
 
   test("GET /ingest (wrong method) → 405", async () => {

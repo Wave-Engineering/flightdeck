@@ -14,6 +14,7 @@
 // 202 (accepted + persisted), 405 (wrong method), 404 (unknown path).
 
 import type { FlightDeckEvent } from "./events/contract.ts";
+import { BUILD_INFO } from "./version.ts";
 import { EventValidationError, validateEvent } from "./events/contract.ts";
 import { EventLog, type IngestSink } from "./log.ts";
 import { StalenessNotifier } from "./push_discord.ts";
@@ -39,8 +40,14 @@ export interface ServerConfig {
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" } as const;
 
-function json(body: unknown, status: number): Response {
-  return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
+// /health reports build identity (#24). Its whole purpose is answering "am I
+// looking at a stale build?", so a cached response is the exact failure it
+// exists to prevent — no-store, even though heuristic caching would need a
+// Last-Modified we never send.
+const NO_STORE_JSON_HEADERS = { ...JSON_HEADERS, "cache-control": "no-store" } as const;
+
+function json(body: unknown, status: number, headers: Record<string, string> = JSON_HEADERS): Response {
+  return new Response(JSON.stringify(body), { status, headers });
 }
 
 /**
@@ -77,7 +84,21 @@ export async function handleRequest(req: Request, cfg: ServerConfig): Promise<Re
 
   if (url.pathname === "/health") {
     if (req.method !== "GET") return json({ error: "method not allowed" }, 405);
-    return json({ ok: true }, 200);
+    // Build identity rides on /health (#24) rather than a new route: this is
+    // already the container healthcheck target and is reachable wherever the
+    // console is, so triage can answer "what build is this?" without shell
+    // access to the Swarm manager. It carries no operator data, so it stays
+    // unauthenticated like the liveness probe it already was.
+    return json(
+      {
+        ok: true,
+        version: BUILD_INFO.version,
+        gitSha: BUILD_INFO.gitSha,
+        startedAt: BUILD_INFO.startedAt,
+      },
+      200,
+      NO_STORE_JSON_HEADERS,
+    );
   }
 
   // --- UI routes (only when a UiHub is configured) -----------------------

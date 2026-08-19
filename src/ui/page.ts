@@ -15,6 +15,7 @@
 import { computeEta } from "../eta.ts";
 import type { ActivityView } from "../fold.ts";
 import { LOGO_DATA_URI, ORG_NAME } from "./brand.ts";
+import { BUILD_INFO } from "../version.ts";
 import { deriveMetrics } from "../metrics.ts";
 import type { Store } from "../store.ts";
 import { resolveStaleMs, stalenessPredicate } from "../watcher.ts";
@@ -127,6 +128,12 @@ body { margin: 0; font: 14px/1.45 ui-sans-serif, system-ui, sans-serif; backgrou
   .fd-brand { background: linear-gradient(90deg, var(--cyan), var(--magenta)); -webkit-background-clip: text; background-clip: text; color: transparent; }
 }
 .fd-brand-sep { color: var(--muted); opacity: .5; }
+/* Build badge (#24): the deployed version, always visible so an operator can
+   report what they are looking at without shell access to the Swarm manager.
+   margin-left:auto pins it right; it is deliberately quiet — this is
+   reference data, not a status signal competing with the live dot. */
+.fd-build { margin-left: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; letter-spacing: .04em; color: var(--muted); white-space: nowrap; }
+.fd-build .fd-build-sha { opacity: .65; }
 .fd-live { font-size: 11px; color: var(--cyan); text-shadow: 0 0 6px #00e5ff77; }
 main { padding: 16px; }
 .fd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--gap); }
@@ -352,6 +359,27 @@ const CLIENT_SCRIPT = `
 })();
 `;
 
+/** Build badge (#24) — which build is this?
+ *
+ *  Rendered into the topbar, which sits OUTSIDE `#board`, so it survives SSE
+ *  frame swaps and ships once per page load. The `title` carries the full SHA
+ *  and process start for anyone reporting a problem; the visible text stays
+ *  short so it never crowds the live dot on a narrow viewport. */
+function renderBuildBadge(): string {
+  const { version, gitSha, shortSha, startedAt } = BUILD_INFO;
+  const detail = `build ${version} · commit ${gitSha} · up since ${startedAt}`;
+  // Only prefix "v" when the value actually looks like a version. An image built
+  // outside the release workflow reports the literal "dev" (Dockerfile ARG
+  // default), and "vdev" reads like a typo rather than the honest signal it is.
+  const label = /^\d/.test(version) ? `v${version}` : version;
+  return (
+    `<span class="fd-build" title="${escapeHtml(detail)}">` +
+    `${escapeHtml(label)}` +
+    `<span class="fd-build-sha"> ${escapeHtml(shortSha)}</span>` +
+    `</span>`
+  );
+}
+
 /** Shared branded topbar (#14): O&W logo + wordmark + the FlightDeck product
  *  title, then a page-specific tail (live dot / back link). Sits OUTSIDE `#board`,
  *  so SSE swaps never resend the inlined logo bytes. */
@@ -364,6 +392,7 @@ function renderTopbar(tail: string): string {
     `<span class="fd-brand">${escapeHtml(ORG_NAME)}</span>` +
     `<span class="fd-brand-sep">//</span>` +
     `<h1>FlightDeck</h1>` +
+    renderBuildBadge() +
     tail +
     `</div>`
   );
