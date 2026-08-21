@@ -154,3 +154,33 @@ describe("closed activity + honest token stub", () => {
     expect(m.collision).toBe(2);
   });
 });
+
+// #27 — duplicates used to fake a completed burn-down. Pre-fix, `completed` could
+// exceed `planTotal`, driving `remaining` to 0 and the machine-time estimate to 0:
+// the card claimed "done" while waves were still running. This pins the numerator
+// staying honest so the ETA stays honest.
+describe("ETA is not faked by duplicate promotions (#27)", () => {
+  test("a 3-wave campaign with 10 promoted rows still shows work remaining", () => {
+    const head: FlightDeckEvent = {
+      kind: "activity_start", activityId: "eta-dup", ts: "2026-08-20T12:00:00Z",
+      activityType: "campaign", label: "dup", detail: { planTotal: 3 },
+    };
+    const promo = (wave: string, ts: string, phase?: string): FlightDeckEvent =>
+      ({
+        kind: "step", activityId: "eta-dup", ts, label: "promoted", wave,
+        ...(phase === undefined ? {} : { phase }),
+      }) as FlightDeckEvent;
+
+    const v = foldActivity([
+      head,
+      promo("W1", "2026-08-20T12:10:00Z"),
+      promo("W1", "2026-08-20T12:11:00Z", "Promote"),
+      promo("W2", "2026-08-20T12:20:00Z"),
+      promo("W2", "2026-08-20T12:21:00Z", "Promote"),
+      promo("W2", "2026-08-20T12:22:00Z", "Promote"),
+    ]);
+
+    expect(v.completed).toBe(2);
+    expect(v.completed).toBeLessThanOrEqual(v.planTotal as number);
+  });
+});

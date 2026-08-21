@@ -58,6 +58,52 @@ describe("rebuild ≡ live", () => {
     store.close();
   });
 
+  test("R-09 survives DUPLICATE promotions (#27)", () => {
+    // The dedup added in #27 is fold-local — a Set inside foldActivity, not a
+    // persisted field. That is only sound because BOTH paths hand the fold a
+    // complete event group: the live path re-folds `eventsFor(activityId)` on
+    // every append, and rebuild re-folds everything. If either ever became
+    // incremental, the live view would count duplicates the rebuild suppressed
+    // (or vice versa) and this test is what would notice.
+    const dupStream: FlightDeckEvent[] = [
+      { kind: "activity_start", activityId: "dup-1", ts: "t00", activityType: "campaign", label: "D", detail: { planTotal: 3 } },
+      { kind: "step", activityId: "dup-1", ts: "t01", label: "promoted", wave: "W1" },
+      { kind: "step", activityId: "dup-1", ts: "t02", label: "promoted", wave: "W2" },
+      { kind: "step", activityId: "dup-1", ts: "t03", label: "promoted", wave: "W2" },
+      { kind: "step", activityId: "dup-1", ts: "t04", label: "promoted", wave: "W2" },
+      { kind: "step", activityId: "dup-1", ts: "t05", label: "promoted", wave: "W3" },
+      { kind: "step", activityId: "dup-1", ts: "t06", label: "promoted", wave: "W3" },
+    ];
+    const store = new Store({ log: new EventLog(logPath), dbPath: ":memory:" });
+    for (const e of dupStream) store.append(e);
+
+    const live = store.getView();
+    expect(live.find((v: ActivityView) => v.activityId === "dup-1")?.completed).toBe(3);
+
+    store.rebuild();
+    expect(store.getView()).toEqual(live);
+    store.close();
+  });
+
+  test("a DUPLICATE appended after a rebuild does not double-count (#27)", () => {
+    // The fold-local Set stakes its soundness on every caller re-folding the whole
+    // group. The existing post-rebuild test appends a NEW wave; this appends a
+    // duplicate of an already-counted one, which is the precise case where a
+    // stale or partial fold would let live and rebuilt views disagree.
+    const store = new Store({ log: new EventLog(logPath), dbPath: ":memory:" });
+    store.append({ kind: "activity_start", activityId: "post-1", ts: "t00", activityType: "campaign", label: "P", detail: { planTotal: 2 } } as FlightDeckEvent);
+    store.append({ kind: "step", activityId: "post-1", ts: "t01", label: "promoted", wave: "W1" } as FlightDeckEvent);
+    store.rebuild();
+
+    store.append({ kind: "step", activityId: "post-1", ts: "t02", label: "promoted", wave: "W1", phase: "Promote" } as FlightDeckEvent);
+    const live = store.getView();
+    expect(live.find((v: ActivityView) => v.activityId === "post-1")?.completed).toBe(1);
+
+    store.rebuild();
+    expect(store.getView()).toEqual(live);
+    store.close();
+  });
+
   test("a brand-new store hydrating from the same log matches the live view", () => {
     const store = liveStore();
     const live = store.getView();

@@ -102,10 +102,16 @@ function numOrNull(v: unknown): number | null {
 /**
  * Fold ONE activity's events (in log order) into its view. This is the single
  * reducer; `fold()` below just groups then delegates here. Caller guarantees
+ * the group is COMPLETE — every event for that activity, not a suffix. The
+ * promotion dedup (`step` case) keeps its state fold-locally rather than in the
+ * view, which is only sound because every caller re-folds the whole group; a
+ * partial-group caller would make the live view and a rebuild disagree.
  * `events` is non-empty and all share one `activityId`.
  */
 export function foldActivity(events: FlightDeckEvent[]): ActivityView {
   const first = events[0] as FlightDeckEvent;
+  // Waves whose promotion has already been counted — see the `step` case.
+  const countedPromotions = new Set<string>();
   const v: ActivityView = {
     activityId: first.activityId,
     activityType: "campaign",
@@ -194,7 +200,56 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
         break;
       }
       case "step": {
-        if (e.label === "promoted") v.completed += 1;
+        if (e.label === "promoted") {
+          // DEDUP: the numerator must not trust its producer to be exactly-once.
+          //
+          // The promote emit is not a deterministic call — it is a line appended to
+          // an agent's prompt asking it to run a command "ONCE" (cc-workflow#1138).
+          // Plan #103 emitted 10 `promoted` rows for 3 waves (1/4/5), rendering
+          // 10/3 on a correctly-keyed, current-emitter campaign. Fixing the emitter
+          // is right and is tracked upstream; fixing it HERE is what makes the card
+          // robust to any over-firing rather than to the one shape we measured.
+          //
+          // Fold-local by design: `foldActivity` always receives the COMPLETE event
+          // group (store.ts re-folds `eventsFor(activityId)` on the live path and
+          // everything on rebuild), so this Set sees full history on every path. No
+          // view field, no persistence, and R-09 still holds — rebuild reproduces
+          // the live view exactly.
+          //
+          // DEDUP REQUIRES IDENTITY, and the identity is the WAVE ALONE.
+          //
+          // NOT (wave, phase). There are exactly two producers of label:"promoted"
+          // and they disagree on phase for the SAME promotion:
+          //
+          //   cc-workflow src/wave_status/state.py:1298
+          //     _emit_event(root, "step", wave=target, action="complete", ...)   → no phase
+          //   cc-workflow skills/nextwave/per-wave-workflow.js:476
+          //     flightdeckTee({ phase: 'Promote', label: disposition })          → phase "Promote"
+          //
+          // They are not alternatives — the same terminal prompt instructs both, and
+          // wavemachine/SKILL.md pins FLIGHTDECK_ACTIVITY_ID so both land on ONE
+          // card by design. `phase` here is the emitting NODE's name, hard-coded at
+          // the only node that emits this label; it identifies the PRODUCER, not the
+          // promotion. Keying on it would leave a clean 3-wave campaign rendering
+          // 6/3 — systematic rather than flaky, which is worse, because it looks
+          // stable and nearly right.
+          //
+          // A `promoted` carrying no wave cannot be PROVEN a duplicate, so it still
+          // counts: collapsing unidentifiable events would trade over-counting for
+          // under-counting, and a card reading 1/3 when three waves landed is no
+          // better than 10/3 — only harder to notice.
+          const wave = typeof e.wave === "string" ? e.wave : null;
+          if (wave === null || !countedPromotions.has(wave)) {
+            if (wave !== null) countedPromotions.add(wave);
+            v.completed += 1;
+          }
+        }
+        // `leg` deliberately NOT deduped on the same key. A float leg is
+        // `{label:"leg", detail:{leg:N}}` — legs legitimately repeat and identify
+        // themselves by `detail.leg`, not by wave/phase. Keying them here would
+        // collapse every leg into one, converting an inflation bug into a
+        // suppression bug. If legs ever show the same duplication, `detail.leg` is
+        // the right key and it is a separate change.
         if (e.label === "leg") v.legs += 1;
         break;
       }

@@ -262,3 +262,164 @@ describe("fold — multiple independent activities", () => {
     expect(m.get("b")?.completed).toBe(0);
   });
 });
+
+// --- promotion dedup (#27) ----------------------------------------------------
+//
+// The promote emit is not a deterministic call — it is a line appended to an
+// agent's prompt asking it to run a command "ONCE" (cc-workflow#1138). Plan #103
+// emitted TEN `promoted` rows for THREE waves. These pin the collector against
+// that, and against over-correcting into a suppression bug.
+
+const promo = (wave: string | null, ts: string, phase?: string): FlightDeckEvent =>
+  ({
+    kind: "step",
+    activityId: "dedup-1",
+    ts,
+    label: "promoted",
+    ...(wave === null ? {} : { wave }),
+    ...(phase === undefined ? {} : { phase }),
+  }) as FlightDeckEvent;
+
+const head: FlightDeckEvent = {
+  kind: "activity_start",
+  activityId: "dedup-1",
+  ts: "2026-08-20T12:49:17Z",
+  activityType: "campaign",
+  label: "automated-estimator",
+  detail: { planTotal: 3 },
+};
+
+describe("promotion dedup (#27)", () => {
+  test("the REAL #103 shape folds to 3/3, not 10/3", () => {
+    // Exactly what the pre-wipe corpus contained: wave-1c ×1 (hand-merged),
+    // wave-2c ×4 and wave-3c ×5 (both through the agent-driven tee).
+    const events: FlightDeckEvent[] = [
+      head,
+      // Producer-faithful: wave-1c was hand-merged (state.py `complete`, no
+      // phase); 2c/3c went through the tee (phase "Promote"). An earlier draft
+      // omitted phase entirely, which made all ten rows one producer shape — so
+      // the suite structurally could not see the (wave,phase) keying bug.
+      promo("wave-1c", "2026-08-20T15:04:00Z"),
+      ...Array.from({ length: 4 }, (_, i) =>
+        promo("wave-2c", `2026-08-20T15:5${i}:00Z`, "Promote")),
+      ...Array.from({ length: 5 }, (_, i) =>
+        promo("wave-3c", `2026-08-20T17:0${i}:00Z`, "Promote")),
+    ];
+    expect(events.filter((e) => (e as { label?: string }).label === "promoted")).toHaveLength(10);
+
+    const v = foldActivity(events);
+    expect(v.completed).toBe(3);
+    expect(v.planTotal).toBe(3);
+    expect(v.eventCount).toBe(events.length);
+    expect(v.lastEventTs).toBe("2026-08-20T17:04:00Z");
+  });
+
+  test("distinct waves each still count — guards against over-dedup", () => {
+    // The failure mode of a careless fix: collapsing everything to 1.
+    const v = foldActivity([
+      head,
+      promo("W1", "2026-08-20T10:00:00Z"),
+      promo("W2", "2026-08-20T11:00:00Z"),
+      promo("W3", "2026-08-20T12:00:00Z"),
+    ]);
+    expect(v.completed).toBe(3);
+  });
+
+  test("BOTH real producers for one wave count ONCE", () => {
+    // This test previously asserted the OPPOSITE — that a differing `phase` meant
+    // a distinct promotion — and that assumption would have left a systematic 2x
+    // over-count. There are exactly two producers of label:"promoted" and they
+    // disagree on phase for the same promotion:
+    //
+    //   state.py:1298                → wave, NO phase
+    //   per-wave-workflow.js:476     → wave, phase "Promote"
+    //
+    // The same terminal prompt instructs both, and wavemachine/SKILL.md pins
+    // FLIGHTDECK_ACTIVITY_ID so both land on one card by design. Keying on phase
+    // would render a clean 3-wave campaign as 6/3 — worse than the flaky bug,
+    // because it is stable and looks nearly right.
+    const v = foldActivity([
+      head,
+      promo("wave-1c", "2026-08-20T15:04:00Z"),              // state.py complete
+      promo("wave-1c", "2026-08-20T15:04:01Z", "Promote"),   // the tee
+      promo("wave-1c", "2026-08-20T15:04:02Z", "Promote"),   // tee re-fire
+    ]);
+    expect(v.completed).toBe(1);
+  });
+
+  test("NON-ADJACENT duplicates still collapse", () => {
+    // Guards an implementation that remembers only the LAST promotion. Every
+    // other duplicate in this suite is adjacent to its twin, so a single
+    // `lastKey` variable would pass all of them — including the mutations run
+    // against the Set. Realistic: a late tee re-fire after the next wave started,
+    // or a resume replaying wave N's rows after N+1.
+    const v = foldActivity([
+      head,
+      promo("W1", "2026-08-20T10:00:00Z"),
+      promo("W2", "2026-08-20T11:00:00Z"),
+      promo("W1", "2026-08-20T12:00:00Z"),
+    ]);
+    expect(v.completed).toBe(2);
+  });
+
+  test("a deduped promotion still advances the REST of the fold", () => {
+    // Guards `if (dup) continue;` at the top of the loop, which passes every
+    // count-based assertion while freezing lastEventTs and eventCount. Not
+    // academic: lastEventTs feeds ageMs/isStalled (watcher.ts) and
+    // StalenessNotifier (push_discord.ts), so the failure mode is a false "idle"
+    // Discord page about a card that is actively promoting.
+    const events: FlightDeckEvent[] = [
+      head,
+      promo("W1", "2026-08-20T10:00:00Z"),
+      promo("W1", "2026-08-20T10:05:00Z"),
+      promo("W1", "2026-08-20T10:09:00Z"),
+    ];
+    const v = foldActivity(events);
+    expect(v.completed).toBe(1);
+    expect(v.lastEventTs).toBe("2026-08-20T10:09:00Z");
+    expect(v.eventCount).toBe(events.length);
+    expect(v.currentWave).toBe("W1");
+  });
+
+  test("a promoted with NO wave still counts — dedup requires identity", () => {
+    // Unidentifiable events cannot be PROVEN duplicates. Collapsing them would
+    // trade over-counting for under-counting: 1/3 when three waves landed is no
+    // better than 10/3, and is harder to notice.
+    const v = foldActivity([
+      head,
+      promo(null, "2026-08-20T10:00:00Z"),
+      promo(null, "2026-08-20T11:00:00Z"),
+    ]);
+    expect(v.completed).toBe(2);
+  });
+
+  test("legs are NOT deduped — they legitimately repeat", () => {
+    // A float leg identifies itself by detail.leg, not by wave/phase. Keying legs
+    // on (wave, phase) would collapse them all, turning an inflation bug into a
+    // suppression bug.
+    const leg = (n: number, ts: string): FlightDeckEvent =>
+      ({
+        kind: "step", activityId: "dedup-1", ts, label: "leg",
+        wave: "W1", detail: { leg: n },
+      }) as FlightDeckEvent;
+    const v = foldActivity([
+      head, leg(1, "2026-08-20T10:00:00Z"),
+      leg(2, "2026-08-20T11:00:00Z"), leg(3, "2026-08-20T12:00:00Z"),
+    ]);
+    expect(v.legs).toBe(3);
+  });
+
+  test("dedup is per-activity, not global", () => {
+    // Two campaigns each promoting "W1" must both count it. `fold()` groups by
+    // activityId and calls foldActivity per group, so the Set is per-view — this
+    // pins that a future refactor cannot hoist it into module scope.
+    const other: FlightDeckEvent = { ...head, activityId: "dedup-2" };
+    const views = fold([
+      head, promo("W1", "2026-08-20T10:00:00Z"),
+      other,
+      { ...promo("W1", "2026-08-20T10:05:00Z"), activityId: "dedup-2" } as FlightDeckEvent,
+    ]);
+    expect(views.get("dedup-1")?.completed).toBe(1);
+    expect(views.get("dedup-2")?.completed).toBe(1);
+  });
+});
