@@ -4,6 +4,8 @@ FlightDeck — event-sourced, containerized status console for wave campaigns & 
 
 Every deterministic state change in the wave-pattern pipeline emits one typed, scope-tagged **event** to an append-only log; this service folds that log into a live view. **No agent is in the reporting path.**
 
+**What the deck may display is governed by [`FLIGHTDECK_AXIOMS.md`](FLIGHTDECK_AXIOMS.md)** — binding rules, same standing as `WAVE_AXIOMS.md`. An operator makes decisions from these cards, so a card that is merely *plausible* is worse than a blank one. Violation is a bug; disagreement is a reason to PR the file.
+
 ## Phase 2 — container service (this repo, in progress)
 
 The Bun/TS service:
