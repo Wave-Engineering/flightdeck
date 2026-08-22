@@ -20,6 +20,7 @@
 // POST, constructed only when configured. Tests inject a mock and NEVER hit the network.
 
 import type { ActivityView } from "./fold.ts";
+import { resolveDisplay } from "./ui/format.ts";
 import { ageMs, isStalled, resolveStaleMs } from "./watcher.ts";
 
 /** Target for outbound pushes. `null` on either field ⇒ unconfigured ⇒ inert. */
@@ -90,7 +91,11 @@ function humanizeMs(ms: number): string {
 
 /** The alert body for a newly-stale activity. Pure over (view, now). */
 export function alertText(view: ActivityView, now: number): string {
-  const name = view.agent ?? view.label ?? view.activityId;
+  // Through the shared resolver (#35) so an alert cannot name an activity
+  // differently from the board, and an unattributed one says so rather than
+  // bolding an id where a Dev-Name belongs.
+  const display = resolveDisplay(view);
+  const name = display.attributed ? display.text : `${display.text} (no agent identified)`;
   const age = ageMs(view, now);
   const idleFor = age === null ? "a while" : humanizeMs(age);
   const scope = view.currentPhase

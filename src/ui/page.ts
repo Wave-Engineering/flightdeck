@@ -22,7 +22,7 @@ import { resolveStaleMs, stalenessPredicate } from "../watcher.ts";
 import type { CardModel } from "./card.ts";
 import { buildConcernQueue, renderConcernQueue } from "./concern_queue.ts";
 import { DEFAULT_LAYOUT, type Lane, laneFor, renderGrid } from "./grid.ts";
-import { escapeHtml } from "./format.ts";
+import { escapeHtml, resolveDisplay } from "./format.ts";
 import { LOG_ANCHOR_ID, type LogScope, renderLogViewer } from "./log_viewer.ts";
 import { buildPresence, renderPresenceStrip } from "./presence.ts";
 import { renderTable } from "./table.ts";
@@ -56,10 +56,17 @@ export interface StalenessOpts {
  */
 function renderLane(lane: Lane, models: CardModel[]): string {
   if (models.length === 0) return "";
+  // AX-2/AX-3 (#35): report how many of this lane's activities could not be
+  // attributed to an agent. Without a tally the condition becomes invisible-normal
+  // — 61% unattributed currently looks like a board full of named things.
+  const unattributed = models.filter((m) => !resolveDisplay(m.view).attributed).length;
   return (
     `<section class="fd-lane" data-lane="${lane}" data-layout="${DEFAULT_LAYOUT[lane]}">` +
     `<div class="fd-lane-head"><h2>${escapeHtml(lane)}</h2>` +
     `<span class="fd-lane-count">${models.length}</span>` +
+    (unattributed > 0
+      ? `<span class="fd-unattributed" title="no agent identified on any event for these activities">${unattributed} unattributed</span>`
+      : "") +
     `<button class="fd-lane-toggle" data-action="toggle-layout" data-lane="${lane}">cards ⇄ table</button>` +
     `</div>` +
     `<div class="fd-lane-cards">${renderGrid(models)}</div>` +
@@ -143,6 +150,26 @@ main { padding: 16px; }
 .fd-card[data-status="blocked"] { border-color: #ff2d9566; box-shadow: 0 0 12px #ff2d9522; }
 .fd-card-head { display: flex; align-items: center; gap: 8px; }
 .fd-card-title { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* AX-3 (#35): an id standing in for an agent name is NOT a name. De-emphasised,
+   italic, and dotted-underlined so it reads as a placeholder at a glance — the
+   text stays visible because it is how an operator finds the activity. */
+.fd-card-title[data-attributed="false"],
+.fd-row-title[data-attributed="false"] {
+  font-weight: 400; font-style: italic; color: var(--muted);
+  text-decoration: underline dotted var(--line); text-underline-offset: 3px;
+}
+/* Never colour-alone: the house rule for status is that it carries a word. The
+   title attribute itself is spoken for by #10 untouched-full-value contract,
+   so the word rides a marker element instead. */
+.fd-card-title[data-attributed="false"]::after,
+.fd-row-title[data-attributed="false"]::after {
+  content: " · unattributed"; font-style: normal; font-size: 10px;
+  color: var(--amber); letter-spacing: 0.04em;
+}
+.fd-concern-agent { font-size: 11px; color: var(--muted); }
+.fd-concern-agent[data-attributed="false"] { font-style: italic; opacity: 0.75; }
+/* The unattributed tally. AX-2: a hole nothing counts is a hole nobody fixes. */
+.fd-unattributed { font-size: 11px; color: var(--amber); margin-left: 8px; }
 .fd-badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
 .fd-badge-status[data-status="active"] { color: var(--cyan); border-color: var(--cyan); text-shadow: 0 0 6px #00e5ff55; }
 .fd-badge-status[data-status="blocked"] { color: var(--magenta); border-color: var(--magenta); text-shadow: 0 0 6px #ff2d9555; }
