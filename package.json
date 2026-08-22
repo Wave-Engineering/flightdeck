@@ -1,6 +1,6 @@
 {
   "name": "flightdeck",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "private": true,
   "description": "FlightDeck — event-sourced status console for wave campaigns & lazyriver floats (container service).",
   "type": "module",
