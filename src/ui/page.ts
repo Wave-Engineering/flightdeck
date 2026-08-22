@@ -161,7 +161,8 @@ main { padding: 16px; }
    italic, and dotted-underlined so it reads as a placeholder at a glance — the
    text stays visible because it is how an operator finds the activity. */
 .fd-card-title[data-attributed="false"],
-.fd-row-title[data-attributed="false"] {
+.fd-row-title[data-attributed="false"],
+.fd-presence-agent[data-attributed="false"] {
   font-weight: 400; font-style: italic; color: var(--muted);
   text-decoration: underline dotted var(--line); text-underline-offset: 3px;
 }
@@ -169,7 +170,8 @@ main { padding: 16px; }
    title attribute itself is spoken for by #10 untouched-full-value contract,
    so the word rides a marker element instead. */
 .fd-card-title[data-attributed="false"]::after,
-.fd-row-title[data-attributed="false"]::after {
+.fd-row-title[data-attributed="false"]::after,
+.fd-presence-agent[data-attributed="false"]::after {
   content: " · unattributed"; font-style: normal; font-size: 10px;
   color: var(--amber); letter-spacing: 0.04em;
 }
@@ -237,6 +239,9 @@ main { padding: 16px; }
 .fd-presence-chip { display: inline-flex; gap: 6px; align-items: baseline; font-size: 12px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; background: var(--panel); }
 .fd-presence-chip[data-stale="true"] { color: var(--amber); border-color: var(--amber); }
 .fd-presence-agent { font-weight: 600; }
+/* The presence roster's own unattributed tally (#38) — same AX-2 treatment as
+   .fd-unattributed / .fd-headless-count. */
+.fd-presence-unattributed { font-size: 11px; color: var(--amber); }
 .fd-presence-count { font-variant-numeric: tabular-nums; color: var(--cyan); }
 .fd-presence-stalecount { color: var(--amber); }
 .fd-presence-host, .fd-presence-last { color: var(--muted); }
