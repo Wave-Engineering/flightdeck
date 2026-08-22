@@ -167,6 +167,53 @@ describe("foldActivity — float", () => {
   });
 });
 
+describe("foldActivity — headless activities are not phantom campaigns (#31, AX-2)", () => {
+  test("step + ci_wait with no activity_start does NOT type as campaign", () => {
+    // Exactly the live shape from #31: real work events, never a lifecycle head.
+    const v = foldActivity([
+      { kind: "step", activityId: "phantom-1", ts: "t0", label: "some-step" },
+      { kind: "ci_wait", activityId: "phantom-1", ts: "t1", action: "waiting-ci" },
+    ] as FlightDeckEvent[]);
+    expect(v.activityType).toBe("headless");
+    expect(v.activityType).not.toBe("campaign");
+  });
+
+  test("no declared type anywhere, including an activity_start with none ⇒ headless", () => {
+    const v = foldActivity([
+      { kind: "activity_start", activityId: "bare", ts: "t0" },
+      { kind: "step", activityId: "bare", ts: "t1", label: "x" },
+    ] as FlightDeckEvent[]);
+    expect(v.activityType).toBe("headless");
+  });
+
+  test("declared campaign/float on a NON-head event is honored, symmetric with session (#31/AX-6)", () => {
+    // A `step` (not activity_start) carrying activityType still classifies the
+    // activity — the fold must not require a head to learn the real type any more
+    // than it requires one to learn a session.
+    const campaignHeadless = foldActivity([
+      { kind: "step", activityId: "late-campaign", ts: "t0", activityType: "campaign", label: "promoted", wave: "1" },
+    ] as FlightDeckEvent[]);
+    expect(campaignHeadless.activityType).toBe("campaign");
+
+    const floatHeadless = foldActivity([
+      { kind: "step", activityId: "late-float", ts: "t0", activityType: "float", label: "leg", detail: { leg: 1 } },
+    ] as FlightDeckEvent[]);
+    expect(floatHeadless.activityType).toBe("float");
+  });
+
+  test("a real activity_start still classifies as before (no regression)", () => {
+    expect(foldActivity(campaign).activityType).toBe("campaign");
+  });
+
+  test("session classification still wins over a head regardless (AC6, #7 unchanged)", () => {
+    const v = foldActivity([
+      { kind: "activity_start", activityId: "s", ts: "t0", activityType: "session", phase: "session" },
+      { kind: "step", activityId: "s", ts: "t1", phase: "session" },
+    ] as FlightDeckEvent[]);
+    expect(v.activityType).toBe("session");
+  });
+});
+
 describe("foldActivity — session classification (#7 / cc-workflow#947)", () => {
   test("legacy shape: phase 'session' with no activityType classifies as session", () => {
     // EXACTLY the production shape flooding the deck (cc-workflow#947): the S1.7

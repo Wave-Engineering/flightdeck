@@ -39,11 +39,34 @@ const STATUS_TEXT: Record<ActivityStatus, string> = {
   closed: "closed",
 };
 
-/** Numerator / denominator for the progress readout, chosen by kind (same markup). */
-function progress(view: ActivityView): { done: number; total: number | null } {
+/** Numerator / denominator for the progress readout, chosen by kind (same markup).
+ *  `null` for a headless activity (#31, AX-2): with no lifecycle head there is no
+ *  known estimator to report a numerator against — not even a "0 / ?" placeholder. */
+function progress(view: ActivityView): { done: number; total: number | null } | null {
+  if (view.activityType === "headless") return null;
   return view.activityType === "campaign"
     ? { done: view.completed, total: view.planTotal }
     : { done: view.legs, total: view.cord };
+}
+
+/** The vitals-row progress readout: the estimator fraction, or an explicit
+ *  "no declared type" hole for a headless activity (#31, AX-2). */
+function renderProgress(view: ActivityView): string {
+  const prog = progress(view);
+  if (!prog) {
+    // AX-1: say exactly what was checked, no more. "Headless" covers TWO shapes —
+    // no activity_start at all, AND an activity_start that never named a type
+    // (the live producer shape, cc-workflow state.py:664) — so the copy must not
+    // claim "no activity_start seen"; that is false for the second shape.
+    return `<span class="fd-progress fd-progress-headless" title="no event on this activity has declared a campaign/float type">no declared type</span>`;
+  }
+  const label = estimatorLabel(view.activityType);
+  const totalText = prog.total === null ? "?" : String(prog.total);
+  return (
+    `<span class="fd-progress" data-estimator="${escapeHtml(label)}">${prog.done} / ${escapeHtml(
+      totalText,
+    )} <span class="fd-estimator-label">${escapeHtml(label)}</span></span>`
+  );
 }
 
 function metricCell(label: string, value: string): string {
@@ -77,9 +100,6 @@ function renderMetricsGrid(m: CardModel): string {
 export function renderCard(model: CardModel, opts?: { expanded?: boolean }): string {
   const { view, eta } = model;
   const expanded = opts?.expanded ?? view.status !== "closed";
-  const label = estimatorLabel(view.activityType);
-  const { done, total } = progress(view);
-  const totalText = total === null ? "?" : String(total);
   const concernChip =
     view.openConcerns > 0
       ? `<span class="fd-chip fd-chip-concern" title="open concerns">⚑ ${view.openConcerns}</span>`
@@ -117,9 +137,7 @@ export function renderCard(model: CardModel, opts?: { expanded?: boolean }): str
     `</header>` +
     // vitals row (always visible)
     `<div class="fd-vitals">` +
-    `<span class="fd-progress" data-estimator="${escapeHtml(label)}">${done} / ${escapeHtml(
-      totalText,
-    )} <span class="fd-estimator-label">${escapeHtml(label)}</span></span>` +
+    renderProgress(view) +
     renderEtaStrip(eta, { variant: "inline" }) +
     concernChip +
     `</div>` +

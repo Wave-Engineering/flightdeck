@@ -54,6 +54,21 @@ describe("renderTable — one row per activity", () => {
   });
 });
 
+describe("renderTable — headless row (#31, AX-2)", () => {
+  test("a headless activity's progress cell reads 'no declared type', not '0 / ?'", () => {
+    const events = [
+      ev({ kind: "step", activityId: "phantom", ts: "2026-07-07T10:00:00Z", label: "some-step" }),
+    ];
+    const view = foldActivity(events);
+    const metrics = deriveMetrics(events);
+    const model: CardModel = { view, metrics, eta: computeEta(view, metrics) };
+    const html = renderTable([model]);
+    expect(html).toContain("no declared type");
+    expect(html).not.toContain("0 / ?");
+    expect(html).toContain("headless"); // the kind column
+  });
+});
+
 describe("per-lane toggle defaults (R-13)", () => {
   let dir: string;
   let store: Store;

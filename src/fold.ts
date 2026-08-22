@@ -13,9 +13,12 @@
 //
 // Emit-side conventions this reducer reads (documented so Phase 1 / S1.8 emitters
 // and the ETA layer agree):
-//   • activity_start may carry `activityType` ("campaign" | "float") and a
-//     `detail` object with `planTotal` (campaign wave denominator) and/or `cord`
-//     (float leg cap).
+//   • `activityType` ("campaign" | "float" | "session") may ride ANY event, not
+//     only activity_start (#31) — a stream with no lifecycle head still classifies
+//     correctly once one of its events declares a type. An activity that never
+//     declares one at all stays "headless": that is a hole (AX-2), not a campaign.
+//   • activity_start may additionally carry a `detail` object with `planTotal`
+//     (campaign wave denominator) and/or `cord` (float leg cap).
 //   • a landed/promoted campaign wave  → `{ kind:"step", label:"promoted", wave }`.
 //   • a lazyriver float leg            → `{ kind:"step", label:"leg", detail:{ leg:N } }`.
 //   • metric events set the latest value per `metric` name; `findings-velocity`
@@ -24,8 +27,10 @@
 import type { FlightDeckEvent } from "./events/contract.ts";
 
 /** "session" (#7 / cc-workflow#947): agent presence, not work — rendered in the
- *  presence strip, never as a campaign/float card. */
-export type ActivityType = "campaign" | "float" | "session";
+ *  presence strip, never as a campaign/float card.
+ *  "headless" (#31): no event has ever declared a type — a claim we do not have,
+ *  not a default assumption of "campaign". Never emitted; fold-derived only. */
+export type ActivityType = "campaign" | "float" | "session" | "headless";
 
 /** Derived lifecycle state. `closed` is computed HERE and nowhere else. */
 export type ActivityStatus = "active" | "blocked" | "ci-wait" | "closed";
@@ -153,7 +158,10 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
   const countedPromotions = new Set<string>();
   const v: ActivityView = {
     activityId: first.activityId,
-    activityType: "campaign",
+    // #31: "headless" is a claim we don't know, not a guess that it's a campaign.
+    // Corrected below the moment any event declares a real type — same head-optional
+    // pattern as the session check just under it.
+    activityType: "headless",
     label: null,
     status: "active",
     startedAt: null,
@@ -214,6 +222,16 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
     // event (not just activity_start) so a re-fold reclassifies history.
     if (e.activityType === "session" || e.phase === "session") isSession = true;
 
+    // Campaign/float classification (#31): declared `activityType: "campaign" | "float"`
+    // is honored on ANY event, symmetric with the session check above. The old code
+    // only read this off `activity_start` (below), which made a headless stream (real
+    // work events, no lifecycle head) fall through to the "campaign" default rather
+    // than to whatever type its events actually declare. Last-write-wins, same as the
+    // other scope-tag latches in this loop.
+    if (e.activityType === "campaign" || e.activityType === "float") {
+      v.activityType = e.activityType;
+    }
+
     // Synthetic marker (#7): any event carrying `detail.synthetic === true` marks
     // the whole activity as test residue the board can filter.
     const detail = asRecord(e.detail);
@@ -225,9 +243,8 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
       case "activity_start": {
         if (v.startedAt === null) v.startedAt = e.ts;
         if (typeof e.label === "string" && e.label.length > 0) v.label = e.label;
-        if (e.activityType === "campaign" || e.activityType === "float") {
-          v.activityType = e.activityType;
-        }
+        // activityType itself is classified above (every event, not just this one —
+        // #31); this branch only handles activity_start's OTHER effects now.
         // Reuses `detail` from above rather than re-deriving it: since the string
         // shim landed, a second call is a second JSON.parse of the same payload,
         // on every re-fold of the group.
