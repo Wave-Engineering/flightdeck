@@ -423,3 +423,104 @@ describe("promotion dedup (#27)", () => {
     expect(views.get("dedup-2")?.completed).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// #34 — `detail` arrives as a JSON STRING from the kit's emitter.
+//
+// `wave-status emit --detail '{"planTotal": 3}'` passes the argparse value
+// through with no json.loads, so the shipped event carries
+//   "detail":"{\"planTotal\": 3}"
+// The string below is that payload VERBATIM, captured from the installed CLI —
+// not a hand-written approximation of it, because the whole defect is a
+// disagreement about shape and an approximation would assume the answer.
+// ---------------------------------------------------------------------------
+
+const CLI_DETAIL = '{"planTotal": 3}';
+
+function startWith(detail: unknown, activityType: "campaign" | "float" = "campaign"): FlightDeckEvent[] {
+  return [
+    {
+      kind: "activity_start",
+      activityId: "d",
+      ts: "2026-07-07T10:00:00Z",
+      activityType,
+      detail,
+    } as FlightDeckEvent,
+  ];
+}
+
+describe("foldActivity — detail delivered as a JSON string (#34)", () => {
+  test("the object form still works, unchanged", () => {
+    expect(foldActivity(startWith({ planTotal: 3 })).planTotal).toBe(3);
+  });
+
+  test("the CLI's string form yields the same planTotal as the object form", () => {
+    expect(foldActivity(startWith(CLI_DETAIL)).planTotal).toBe(3);
+  });
+
+  test("string and object forms fold identically", () => {
+    expect(foldActivity(startWith(CLI_DETAIL)).planTotal).toBe(
+      foldActivity(startWith({ planTotal: 3 })).planTotal,
+    );
+  });
+
+  test("cord survives the string form too", () => {
+    expect(foldActivity(startWith('{"cord": 7}', "float")).cord).toBe(7);
+  });
+
+  test("the synthetic marker survives the string form — the #7 filter was inert", () => {
+    expect(foldActivity(startWith('{"synthetic": true}')).synthetic).toBe(true);
+  });
+
+  test("invalid JSON yields no denominator and does not throw", () => {
+    expect(foldActivity(startWith('{"planTotal": ')).planTotal).toBeNull();
+  });
+
+  test("free-form prose is permitted by the emitter's schema and must be inert", () => {
+    // schema.json: "Free-form detail payload (string or structured)."
+    expect(foldActivity(startWith("promoted wave 2 by hand")).planTotal).toBeNull();
+  });
+
+  test.each(["3", '"x"', "[1,2]", "null", "true"])(
+    "valid JSON encoding a non-object (%s) yields no denominator",
+    (raw) => {
+      expect(foldActivity(startWith(raw)).planTotal).toBeNull();
+    },
+  );
+
+  // The synthetic negatives matter more than the positive. A wrong `true` does not
+  // render badly — it DELETES the activity: page.ts filters `!v.synthetic` off the
+  // board and push_discord.ts skips it for alerts, so the card and its pages vanish
+  // with no artifact left to compare against. The implementation is strict
+  // (`=== true`); these pin it against a future loosening to a truthy check.
+  test("a string detail without the marker leaves synthetic false", () => {
+    expect(foldActivity(startWith(CLI_DETAIL)).synthetic).toBe(false);
+    expect(foldActivity(startWith("promoted wave 2 by hand")).synthetic).toBe(false);
+  });
+
+  test.each(['{"synthetic": "true"}', '{"synthetic": 1}', '{"synthetic": "yes"}', '{"synthetic": null}'])(
+    "only a strict boolean true marks synthetic, not %s",
+    (raw) => {
+      expect(foldActivity(startWith(raw)).synthetic).toBe(false);
+    },
+  );
+
+  test("the marker works on ANY event kind, not just activity_start (#7's contract)", () => {
+    const v = foldActivity([
+      { kind: "activity_start", activityId: "d", ts: "2026-07-07T10:00:00Z", activityType: "campaign" },
+      { kind: "step", activityId: "d", ts: "2026-07-07T10:01:00Z", label: "x", detail: '{"synthetic": true}' },
+    ] as FlightDeckEvent[]);
+    expect(v.synthetic).toBe(true);
+  });
+
+  test("a detail string over the size cap is inert rather than parsed", () => {
+    const huge = '{"planTotal": 3, "pad": "' + "x".repeat(70_000) + '"}';
+    expect(foldActivity(startWith(huge)).planTotal).toBeNull();
+  });
+
+  test("a DOUBLE-encoded payload is rejected, not unwrapped", () => {
+    // Only one layer is parsed on purpose: unwrapping further would absorb a
+    // producer bug this shim exists to surface.
+    expect(foldActivity(startWith(JSON.stringify(CLI_DETAIL))).planTotal).toBeNull();
+  });
+});
