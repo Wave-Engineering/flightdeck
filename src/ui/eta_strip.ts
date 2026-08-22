@@ -24,10 +24,17 @@ export function renderEtaStrip(eta: EtaResult, opts?: { variant?: "headline" | "
   // AC6 (cc#1026): the machine figure is null until there's a completed wave to set a
   // rate — render it as "—" (formatDuration) but carry the REASON on the hover title so
   // the N/A is explicit, not a mystery dash.
+  //
+  // #31: a headless activity's null is a DIFFERENT reason — there is no declared
+  // campaign/float shape at all, so "no completed wave to set a rate" (a campaign
+  // framing) would be as false a claim as the progress cell's old "no activity_start
+  // seen" text was. Name the actual hole.
   const machineTitle =
-    eta.machineTimeRemainingMs === null
-      ? "machine-time remaining: not yet estimable — no completed wave to set a rate"
-      : "machine-time remaining";
+    eta.machineTimeRemainingMs !== null
+      ? "machine-time remaining"
+      : eta.kind === "headless"
+        ? "machine-time remaining: not estimable — no declared campaign/float type"
+        : "machine-time remaining: not yet estimable — no completed wave to set a rate";
 
   if (variant === "inline") {
     return (

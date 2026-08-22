@@ -60,12 +60,19 @@ function renderLane(lane: Lane, models: CardModel[]): string {
   // attributed to an agent. Without a tally the condition becomes invisible-normal
   // — 61% unattributed currently looks like a board full of named things.
   const unattributed = models.filter((m) => !resolveDisplay(m.view).attributed).length;
+  // AX-2 (#31): same reasoning for headless — without a lane-visible tally, a card
+  // missing its lifecycle head is indistinguishable from a normal one at a glance,
+  // which is exactly the "check that can't fail" shape the axiom forbids.
+  const headless = models.filter((m) => m.view.activityType === "headless").length;
   return (
     `<section class="fd-lane" data-lane="${lane}" data-layout="${DEFAULT_LAYOUT[lane]}">` +
     `<div class="fd-lane-head"><h2>${escapeHtml(lane)}</h2>` +
     `<span class="fd-lane-count">${models.length}</span>` +
     (unattributed > 0
       ? `<span class="fd-unattributed" title="no agent identified on any event for these activities">${unattributed} unattributed</span>`
+      : "") +
+    (headless > 0
+      ? `<span class="fd-headless-count" title="no event on these activities has declared a campaign/float type">${headless} headless</span>`
       : "") +
     `<button class="fd-lane-toggle" data-action="toggle-layout" data-lane="${lane}">cards ⇄ table</button>` +
     `</div>` +
@@ -170,6 +177,9 @@ main { padding: 16px; }
 .fd-concern-agent[data-attributed="false"] { font-style: italic; opacity: 0.75; }
 /* The unattributed tally. AX-2: a hole nothing counts is a hole nobody fixes. */
 .fd-unattributed { font-size: 11px; color: var(--amber); margin-left: 8px; }
+/* The headless tally (#31) and its per-card progress hole — same AX-2 treatment. */
+.fd-headless-count { font-size: 11px; color: var(--amber); margin-left: 8px; }
+.fd-progress-headless { font-style: italic; color: var(--muted); }
 .fd-badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
 .fd-badge-status[data-status="active"] { color: var(--cyan); border-color: var(--cyan); text-shadow: 0 0 6px #00e5ff55; }
 .fd-badge-status[data-status="blocked"] { color: var(--magenta); border-color: var(--magenta); text-shadow: 0 0 6px #ff2d9555; }

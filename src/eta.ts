@@ -105,6 +105,19 @@ function floatEta(view: ActivityView, metrics: ActivityMetrics): EtaResult {
 
 /** Compute the split ETA for an activity from its view + derived metrics. */
 export function computeEta(view: ActivityView, metrics: ActivityMetrics): EtaResult {
+  // #31: a headless activity has no confirmed campaign/float shape, so it gets NO
+  // estimator — falling through to floatEta would fabricate a legs-remaining band
+  // (cord defaulted to 12) for something never declared a float, exactly the
+  // "plausible wrong card" AX-2 forbids. Blocked-on-you still stands: it is measured
+  // from event timestamps, not an estimate of anything.
+  if (view.activityType === "headless") {
+    // A CLOSED headless activity still gets a real 0, not null: "no more machine
+    // time is coming" follows from `activity_end` alone (view.status), independent
+    // of ever knowing the campaign/float shape — it is not an estimate that needs
+    // a type to compute. Only an OPEN headless activity has no answer at all.
+    const machineTimeRemainingMs = view.status === "closed" ? 0 : null;
+    return { kind: "headless", machineTimeRemainingMs, blockedOnYouMs: metrics.idleMs };
+  }
   // A closed activity has no remaining machine-time; its blocked-on-you total stands.
   if (view.status === "closed") {
     const base = view.activityType === "campaign" ? campaignEta(view, metrics) : floatEta(view, metrics);

@@ -168,6 +168,65 @@ describe("card header — dev-name title + granular action status (cc#1026)", ()
   });
 });
 
+describe("headless card (#31, AX-2)", () => {
+  test("a headless activity shows 'no declared type', never '0 / ?' or a waves/legs count", () => {
+    const m = model([
+      ev({ kind: "step", activityId: "phantom", ts: "2026-07-07T10:00:00Z", label: "some-step" }),
+      ev({ kind: "ci_wait", activityId: "phantom", ts: "2026-07-07T10:05:00Z", action: "waiting-ci" }),
+    ]);
+    expect(m.view.activityType).toBe("headless");
+    const html = renderCard(m);
+    expect(html).toContain("no declared type");
+    expect(html).not.toContain("0 / ?");
+    expect(html).not.toContain(">waves<");
+    expect(html).not.toContain(">legs<");
+    expect(html).toContain('data-type="headless"');
+  });
+
+  test("a bare activity_start with no activityType is headless too, and the copy never claims otherwise (#31 code-review finding)", () => {
+    // The dominant live shape (cc-workflow state.py:664): a REAL activity_start,
+    // just with no `activityType`. Distinct from a stream with no activity_start at
+    // all — both classify headless, but only the copy for the first must not lie.
+    const m = model([
+      ev({ kind: "activity_start", activityId: "deploy-smoke", ts: "2026-07-07T10:00:00Z", label: "deploy-smoke" }),
+    ]);
+    expect(m.view.activityType).toBe("headless");
+    const html = renderCard(m);
+    expect(html).toContain("no declared type");
+    expect(html).not.toContain("no activity_start seen");
+  });
+
+  test("mutation guard: a plausible wrong fix (defaulting cord to fabricate a float band) would leak a numeric ETA — it must not", () => {
+    // headless activities that happen to emit `leg` steps (never declared float)
+    // must not get a real float ETA estimate — computeEta has an explicit headless
+    // branch precisely to prevent that.
+    const m = model([
+      ev({ kind: "step", activityId: "phantom2", ts: "2026-07-07T10:00:00Z", label: "leg", detail: { leg: 1 } }),
+    ]);
+    expect(m.eta.machineTimeRemainingMs).toBeNull();
+    expect(m.eta.kind).toBe("headless");
+  });
+
+  test("a CLOSED headless activity gets a real 0, not null — that fact is activity_end, not a type-dependent estimate", () => {
+    const m = model([
+      ev({ kind: "step", activityId: "phantom3", ts: "2026-07-07T10:00:00Z", label: "some-step" }),
+      ev({ kind: "activity_end", activityId: "phantom3", ts: "2026-07-07T10:05:00Z" }),
+    ]);
+    expect(m.view.activityType).toBe("headless");
+    expect(m.view.status).toBe("closed");
+    expect(m.eta.machineTimeRemainingMs).toBe(0);
+  });
+
+  test("the ETA tooltip names the real reason for a headless hole, not a campaign-shaped one", () => {
+    const m = model([
+      ev({ kind: "step", activityId: "phantom4", ts: "2026-07-07T10:00:00Z", label: "some-step" }),
+    ]);
+    const html = renderCard(m);
+    expect(html).toContain("no declared campaign/float type");
+    expect(html).not.toContain("no completed wave to set a rate");
+  });
+});
+
 describe("card grid (default multi-activity view, R-12)", () => {
   test("N models render N cards", () => {
     const html = renderGrid([campaignModel("a"), floatModel("b"), campaignModel("c")]);

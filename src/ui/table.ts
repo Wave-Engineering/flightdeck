@@ -19,12 +19,19 @@ const STATUS_TEXT: Record<CardModel["view"]["status"], string> = {
   closed: "closed",
 };
 
-function row(m: CardModel): string {
-  const { view, metrics, eta } = m;
+/** Same "no declared type" hole as the card (#31, AX-2) — no estimator for
+ *  something that never declared a campaign/float type. */
+function progressCell(view: CardModel["view"]): string {
+  if (view.activityType === "headless") return "no declared type";
   const label = estimatorLabel(view.activityType);
   const done = view.activityType === "campaign" ? view.completed : view.legs;
   const total = view.activityType === "campaign" ? view.planTotal : view.cord;
   const totalText = total === null ? "?" : String(total);
+  return `${done} / ${escapeHtml(totalText)} ${escapeHtml(label)}`;
+}
+
+function row(m: CardModel): string {
+  const { view, metrics, eta } = m;
   // Same title precedence as the card (#10): agent Dev-Name > short project name.
   const fullName = view.label ?? view.activityId;
   const display = resolveDisplay(view);
@@ -35,7 +42,7 @@ function row(m: CardModel): string {
     )}">${escapeHtml(display.text)}</td>` +
     `<td>${escapeHtml(view.activityType)}</td>` +
     `<td>${escapeHtml(STATUS_TEXT[view.status])}</td>` +
-    `<td class="fd-row-progress">${done} / ${escapeHtml(totalText)} ${escapeHtml(label)}</td>` +
+    `<td class="fd-row-progress">${progressCell(view)}</td>` +
     `<td class="fd-row-machine">${escapeHtml(formatDuration(eta.machineTimeRemainingMs))}</td>` +
     `<td class="fd-row-blocked" data-blocked-ms="${metrics.idleMs}">${escapeHtml(formatDuration(metrics.idleMs))}</td>` +
     `<td class="fd-row-concerns">${view.openConcerns > 0 ? `⚑ ${view.openConcerns}` : ""}</td>` +
