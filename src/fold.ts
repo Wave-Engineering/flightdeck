@@ -188,7 +188,11 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
     if (typeof e.phase === "string") v.currentPhase = e.phase;
     if (typeof e.wave === "string") v.currentWave = e.wave;
     if (e.flight !== null && e.flight !== undefined) v.currentFlight = e.flight;
-    if (typeof e.agent === "string") v.agent = e.agent;
+    // Length-guarded, matching the `label` latch below. An emitter shipping
+    // `--agent "$DEV_NAME"` with the variable unset sends "", and an unguarded
+    // latch would let that ERASE an attribution the activity already had — a
+    // degraded emit silently un-naming a named agent (AX-4).
+    if (typeof e.agent === "string" && e.agent.length > 0) v.agent = e.agent;
     // Granular action, last-write-wins (AC3): latch ONLY active-lane actions (step/phase
     // — "promoting"/"launching"/"awaiting-verdict"/"planning"/…). Block/ci actions
     // ("hold"/"waiting-on-meatbag"/"waiting-ci") arrive as blocked_on_human/ci_wait kinds

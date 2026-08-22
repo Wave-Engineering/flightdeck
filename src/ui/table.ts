@@ -10,7 +10,7 @@
 // the card uses. N models → N rows, by construction.
 
 import { type CardModel, estimatorLabel } from "./card.ts";
-import { escapeHtml, formatDuration, shortName } from "./format.ts";
+import { escapeHtml, formatDuration, resolveDisplay } from "./format.ts";
 
 const STATUS_TEXT: Record<CardModel["view"]["status"], string> = {
   active: "active",
@@ -27,10 +27,12 @@ function row(m: CardModel): string {
   const totalText = total === null ? "?" : String(total);
   // Same title precedence as the card (#10): agent Dev-Name > short project name.
   const fullName = view.label ?? view.activityId;
-  const displayName = view.agent ?? shortName(fullName);
+  const display = resolveDisplay(view);
   return (
     `<tr class="fd-row" data-activity-id="${escapeHtml(view.activityId)}" data-status="${escapeHtml(view.status)}">` +
-    `<td class="fd-row-title" title="${escapeHtml(fullName)}">${escapeHtml(displayName)}</td>` +
+    `<td class="fd-row-title" data-attributed="${display.attributed}" title="${escapeHtml(
+      fullName,
+    )}">${escapeHtml(display.text)}</td>` +
     `<td>${escapeHtml(view.activityType)}</td>` +
     `<td>${escapeHtml(STATUS_TEXT[view.status])}</td>` +
     `<td class="fd-row-progress">${done} / ${escapeHtml(totalText)} ${escapeHtml(label)}</td>` +

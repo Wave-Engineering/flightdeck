@@ -15,7 +15,7 @@ import type { ActivityMetrics } from "../metrics.ts";
 import type { EtaResult } from "../eta.ts";
 import type { ActivityStatus, ActivityType, ActivityView } from "../fold.ts";
 import { renderEtaStrip } from "./eta_strip.ts";
-import { escapeHtml, formatDuration, formatMetricValue, shortName } from "./format.ts";
+import { escapeHtml, formatDuration, formatMetricValue, resolveDisplay } from "./format.ts";
 
 /** Everything a card needs, assembled from the store's fold + derivations. */
 export interface CardModel {
@@ -88,7 +88,7 @@ export function renderCard(model: CardModel, opts?: { expanded?: boolean }): str
   // one, else the SHORT project name (basename — never the full forge path).
   // The untouched full value stays on the hover title either way.
   const fullName = view.label ?? view.activityId;
-  const displayName = view.agent ?? shortName(fullName);
+  const display = resolveDisplay(view);
   // Status text (AC3, cc#1026): while active, show the granular current action
   // ("promoting"/"awaiting-verdict"/…) rather than the coarse "active" badge; the
   // lifecycle text still speaks for blocked/ci-wait/closed. `data-status` below keeps
@@ -104,7 +104,9 @@ export function renderCard(model: CardModel, opts?: { expanded?: boolean }): str
     `data-expanded="${expanded ? "true" : "false"}">` +
     // header
     `<header class="fd-card-head">` +
-    `<span class="fd-card-title" title="${escapeHtml(fullName)}">${escapeHtml(displayName)}</span>` +
+    `<span class="fd-card-title" data-attributed="${display.attributed}" title="${escapeHtml(
+      fullName,
+    )}">${escapeHtml(display.text)}</span>` +
     `<span class="fd-badge fd-badge-type">${escapeHtml(view.activityType)}</span>` +
     `<span class="fd-badge fd-badge-status" data-status="${escapeHtml(view.status)}">${escapeHtml(
       statusText,

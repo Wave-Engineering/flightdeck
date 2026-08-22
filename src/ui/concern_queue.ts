@@ -14,7 +14,7 @@
 // of the single fold.
 
 import type { ActivityStatus, ActivityType, ActivityView, Concern } from "../fold.ts";
-import { escapeHtml, shortName } from "./format.ts";
+import { escapeHtml, resolveDisplay, shortName } from "./format.ts";
 
 export interface ConcernQueueEntry {
   activityId: string;
@@ -93,13 +93,39 @@ function entryRow(entry: ConcernQueueEntry): string {
   const c = entry.concern;
   // Short project name (#10) — the full value survives on the hover title.
   const fullTitle = entry.activityLabel ?? entry.activityId;
+  // The activity keeps its OWN slot. Reusing the resolved display here printed the
+  // Dev-Name twice — chip and activity span both — and demoted the activity to a
+  // hover title, which is AX-6 (one field, two meanings) reintroduced inside the
+  // AX-3 fix. Two facts, two places.
   const title = shortName(fullTitle);
+  // AX-3: every concern names its agent. The queue previously showed only the
+  // activity, so a concern could not be traced to who raised it without opening
+  // the transcript.
+  //
+  // The CONCERN's own scope, and NO fallback to the activity's agent. `v.agent`
+  // is latched last-write-wins from any event, so attributing a concern by it
+  // credits whoever emitted most recently — precisely the mid-stream rename AX-4
+  // says to record rather than absorb. Falling back would make an unattributed
+  // concern indistinguishable from an attributed one, which is the guess AX-2
+  // forbids; "unattributed" is the honest answer and it is also actionable, since
+  // it points straight at the emit-side gap.
+  const concernAgent = entry.concern.scope.agent;
+  const display = resolveDisplay({
+    agent: concernAgent,
+    label: entry.activityLabel,
+    activityId: entry.activityId,
+  });
   return (
     // data-ts (#12): the concern's ISO-8601 ts rides the row so the client-side
     // seen-watermark can compare lexicographically (chronological for this format).
     `<div class="fd-concern-row${entry.stalled ? " is-stalled" : ""}" data-activity-id="${escapeHtml(
       entry.activityId,
     )}" data-ts="${escapeHtml(c.ts)}">` +
+    `<span class="fd-concern-agent" data-attributed="${display.attributed}" title="${escapeHtml(
+      display.attributed
+        ? "agent named on this concern"
+        : "no agent on this concern — the activity carries no agent either",
+    )}">${escapeHtml(display.attributed ? display.text : "unattributed")}</span>` +
     `<span class="fd-concern-kind" data-kind="${escapeHtml(c.concernKind)}">${escapeHtml(c.concernKind)}</span>` +
     `<span class="fd-concern-source">${escapeHtml(c.source)}</span>` +
     (entry.stalled ? `<span class="fd-concern-stalled" title="stalled with open concerns">⏳ stalled</span>` : "") +
