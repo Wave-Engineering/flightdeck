@@ -89,9 +89,48 @@ export interface ActivityView {
 
 const STATE_BEARING = new Set(["activity_start", "phase", "step", "blocked_on_human", "ci_wait"]);
 
+/**
+ * Normalise `detail` to a plain object, or null.
+ *
+ * A STRING is parsed as JSON, and that is a compatibility shim rather than the
+ * design. The kit's emitter passes `--detail` through argparse with no
+ * `json.loads` (`wave-status emit`), so every event it has ever shipped carries
+ * `detail` as a JSON *string* — and this function accepted only objects, so
+ * every field inside one was silently dropped. That is both the missing campaign
+ * denominator (`planTotal`, below) and the inert `synthetic` test-residue filter
+ * (#7): the emit succeeds, the event lands, the field vanishes, nothing errors.
+ *
+ * The producer is being fixed to emit an object
+ * (`Wave-Engineering/claudecode-workflow#1145`). That fix is NOT retroactive:
+ * the store is append-only with no prune (#25) and `rebuild()` re-folds the whole
+ * log on every boot, so events already on disk are string-shaped forever. Parsing
+ * here is what recovers them.
+ *
+ * Anything that is not a plain object — invalid JSON, or valid JSON encoding an
+ * array/number/null/string, or free-form prose (the emitter's schema permits
+ * "string or structured") — returns null exactly as before. Never throws.
+ */
 function asRecord(detail: unknown): Record<string, unknown> | null {
-  return typeof detail === "object" && detail !== null && !Array.isArray(detail)
-    ? (detail as Record<string, unknown>)
+  let v: unknown = detail;
+  if (typeof v === "string") {
+    // Bounded before parsing. The log is append-only with no prune (#25) and
+    // `Store.upsertActivity` re-folds an activity's whole group on every append,
+    // so a large valid payload is re-parsed for the life of the deployment. Every
+    // real convention payload is tens of bytes (`{"planTotal": 3}` is 16); this
+    // cap is orders of magnitude above them and exists only to stop amplification.
+    if (v.length > 64_000) return null;
+    // ONE layer, deliberately. Recursing would silently unwrap a double-encoded
+    // payload, which is a producer bug this shim must surface rather than absorb.
+    try {
+      // `as unknown` because JSON.parse returns `any`, which would silently
+      // un-check the guards below in a file that is otherwise any-free.
+      v = JSON.parse(v) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  return typeof v === "object" && v !== null && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
     : null;
 }
 
@@ -185,7 +224,10 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
         if (e.activityType === "campaign" || e.activityType === "float") {
           v.activityType = e.activityType;
         }
-        const d = asRecord(e.detail);
+        // Reuses `detail` from above rather than re-deriving it: since the string
+        // shim landed, a second call is a second JSON.parse of the same payload,
+        // on every re-fold of the group.
+        const d = detail;
         if (d) {
           const pt = numOrNull(d["planTotal"]);
           if (pt !== null) v.planTotal = pt;
