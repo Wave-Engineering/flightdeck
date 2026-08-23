@@ -84,6 +84,8 @@ export interface ActivityView {
   completed: number; // landed/promoted campaign waves
   cord: number | null; // float leg cap
   legs: number; // float legs so far
+  workItemsTotal: number | null; // campaign work-item denominator (cc-workflow#1154)
+  workItemsDone: number; // closed work items, campaign scope
   // metrics
   metrics: Record<string, MetricSample>;
   findingsVelocity: number[]; // float converge/explore trend
@@ -156,6 +158,10 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
   const first = events[0] as FlightDeckEvent;
   // Waves whose promotion has already been counted — see the `step` case.
   const countedPromotions = new Set<string>();
+  // Work items whose close has already been counted — same dedup rationale
+  // as `countedPromotions`, keyed on the issue ref (`step.label`) rather
+  // than the wave (cc-workflow#1154).
+  const countedCloses = new Set<string>();
   const v: ActivityView = {
     activityId: first.activityId,
     // #31: "headless" is a claim we don't know, not a guess that it's a campaign.
@@ -179,6 +185,8 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
     completed: 0,
     cord: null,
     legs: 0,
+    workItemsTotal: null,
+    workItemsDone: 0,
     metrics: {},
     findingsVelocity: [],
     concerns: [],
@@ -254,6 +262,8 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
           if (pt !== null) v.planTotal = pt;
           const cord = numOrNull(d["cord"]);
           if (cord !== null) v.cord = cord;
+          const wit = numOrNull(d["workItemsTotal"]);
+          if (wit !== null) v.workItemsTotal = wit;
         }
         break;
       }
@@ -314,6 +324,22 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
         // suppression bug. If legs ever show the same duplication, `detail.leg` is
         // the right key and it is a separate change.
         if (e.label === "leg") v.legs += 1;
+        // A closed work item (`wave-status close_issue`, cc-workflow
+        // state.py:1302) → `{kind:"step", action:"close-issue", label:<issue
+        // ref>}`. Same dedup shape as `promoted` above and for the same
+        // reason: the identity is the issue ref (`label`), not the wave —
+        // an issue can be closed while the card's `currentWave` has since
+        // moved on, and re-keying on wave would either miss it or migrate
+        // it to the wrong wave's bucket. Campaign scope only (cc-workflow
+        // #1154); wave-scope work-item counts need a wave-level total this
+        // event does not carry and remain open on cc-workflow#1146.
+        if (e.action === "close-issue") {
+          const ref = typeof e.label === "string" ? e.label : null;
+          if (ref === null || !countedCloses.has(ref)) {
+            if (ref !== null) countedCloses.add(ref);
+            v.workItemsDone += 1;
+          }
+        }
         break;
       }
       case "metric": {

@@ -76,6 +76,32 @@ function metricCell(label: string, value: string): string {
   );
 }
 
+/** Work-items done/total (cc-workflow#1146 step 4, campaign scope — #1154).
+ *  Campaign-only: a float's estimator is legs/cord, and `workItemsTotal` is
+ *  never shipped for a float — rendering the cell there would read as "not
+ *  tracked yet" rather than the true "not applicable" (AX-2's hole-naming
+ *  distinguishes the two). `null` (omit the cell) covers that.
+ *
+ *  AX-2's pair is atomic: a numerator is only meaningful against a KNOWN
+ *  denominator, so an unknown `workItemsTotal` suppresses the numerator too
+ *  — "?" alone, never "0 / ?" (AX-2 names that exact shape as the failure
+ *  this axiom exists to prevent). Deliberately NOT the same
+ *  numerator-shown-regardless-of-denominator convention `renderProgress`
+ *  above uses — that pattern predates this cell, and inheriting it here
+ *  would just be a second instance of the same violation, not a reason to
+ *  keep it. The hole also carries a title naming WHICH kind of gap it is
+ *  (an un-shipped denominator, not an emit failure), mirroring the headless
+ *  progress hole's `title` above. */
+function renderWorkItemsCell(view: ActivityView): string | null {
+  if (view.activityType !== "campaign") return null;
+  if (view.workItemsTotal === null) {
+    const hole =
+      `<span class="fd-metric-hole" title="no activity_start on this campaign has shipped a workItemsTotal denominator">?</span>`;
+    return metricCell("work items", hole);
+  }
+  return metricCell("work items", `${view.workItemsDone} / ${view.workItemsTotal}`);
+}
+
 /** The full metrics grid, shown only when the card is expanded (R-14). */
 function renderMetricsGrid(m: CardModel): string {
   const { metrics } = m;
@@ -90,6 +116,8 @@ function renderMetricsGrid(m: CardModel): string {
     // token: seamed-absent stub until #853 — renders as an em dash, never faked.
     metricCell("tokens", formatMetricValue(metrics.token)),
   ];
+  const workItems = renderWorkItemsCell(m.view);
+  if (workItems !== null) cells.push(workItems);
   return `<div class="fd-metrics-grid">${cells.join("")}</div>`;
 }
 
