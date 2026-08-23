@@ -115,6 +115,34 @@ describe("R-14 vitals row + expandable metrics grid", () => {
   });
 });
 
+describe("work-items done/total cell — campaign scope only (cc-workflow#1154)", () => {
+  test("a campaign card with no shipped denominator shows a NAMED hole, never '0 / ?' (AX-2)", () => {
+    // AX-2: the pair is atomic. A numerator is meaningless without a known
+    // denominator — "0 / ?" is a false "we've observed zero", not a hole.
+    const html = renderCard(campaignModel());
+    expect(html).toContain(">work items<");
+    expect(html).not.toContain("0 / ?");
+    expect(html).toContain('class="fd-metric-hole"');
+    expect(html).toContain("workItemsTotal denominator"); // names WHICH hole this is
+  });
+
+  test("a float card never shows the work-items cell — not applicable, not a hole", () => {
+    const html = renderCard(floatModel());
+    expect(html).not.toContain(">work items<");
+  });
+
+  test("a campaign with workItemsTotal + closed work items shows the real fraction", () => {
+    const m = model([
+      ev({ kind: "activity_start", activityId: "wi1", ts: "2026-08-23T10:00:00Z", activityType: "campaign", detail: { planTotal: 7, workItemsTotal: 5 } }),
+      ev({ kind: "step", activityId: "wi1", ts: "2026-08-23T10:05:00Z", action: "close-issue", label: "owner/repo#1" }),
+      ev({ kind: "step", activityId: "wi1", ts: "2026-08-23T10:06:00Z", action: "close-issue", label: "owner/repo#2" }),
+    ]);
+    const html = renderCard(m);
+    expect(html).toContain(">work items<");
+    expect(html).toContain("2 / 5");
+  });
+});
+
 describe("card header — dev-name title + granular action status (cc#1026)", () => {
   const PROJECT = "github.com/Wave-Engineering/blueshift";
 

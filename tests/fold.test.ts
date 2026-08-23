@@ -472,6 +472,94 @@ describe("promotion dedup (#27)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// cc-workflow#1154 — work-items done/total (campaign scope). `close_issue()`
+// (cc-workflow state.py:1302) emits `{kind:"step", action:"close-issue",
+// label:<issue ref>}` on every issue close; `campaign-head` ships
+// `workItemsTotal` in `activity_start.detail`. Same dedup rationale and
+// shape as the `promoted` collector above, keyed on the issue ref instead
+// of the wave.
+
+const closeIssue = (ref: string | null, ts: string, wave?: string): FlightDeckEvent =>
+  ({
+    kind: "step",
+    activityId: "witems-1",
+    ts,
+    action: "close-issue",
+    ...(ref === null ? {} : { label: ref }),
+    ...(wave === undefined ? {} : { wave }),
+  }) as FlightDeckEvent;
+
+const witemsHead: FlightDeckEvent = {
+  kind: "activity_start",
+  activityId: "witems-1",
+  ts: "2026-08-23T12:00:00Z",
+  activityType: "campaign",
+  label: "witems-campaign",
+  detail: { planTotal: 3, workItemsTotal: 5 },
+};
+
+describe("work-items done/total (cc-workflow#1154)", () => {
+  test("workItemsTotal parses from activity_start detail", () => {
+    const v = foldActivity([witemsHead]);
+    expect(v.workItemsTotal).toBe(5);
+    expect(v.workItemsDone).toBe(0);
+  });
+
+  test("distinct issue refs each count", () => {
+    const v = foldActivity([
+      witemsHead,
+      closeIssue("owner/repo#1", "2026-08-23T12:01:00Z"),
+      closeIssue("owner/repo#2", "2026-08-23T12:02:00Z"),
+      closeIssue("owner/repo#3", "2026-08-23T12:03:00Z"),
+    ]);
+    expect(v.workItemsDone).toBe(3);
+  });
+
+  test("a re-fired close-issue for the SAME ref counts once", () => {
+    // `close_issue()` is idempotent-by-design (state.py just re-sets status to
+    // "closed"), so a retried CLI call or a re-run hook can legitimately emit
+    // the same close twice for one issue.
+    const v = foldActivity([
+      witemsHead,
+      closeIssue("owner/repo#1", "2026-08-23T12:01:00Z"),
+      closeIssue("owner/repo#1", "2026-08-23T12:01:05Z"),
+    ]);
+    expect(v.workItemsDone).toBe(1);
+  });
+
+  test("a close-issue with NO label still counts — dedup requires identity", () => {
+    // Same rationale as the wave-less `promoted` case: an unidentifiable
+    // close cannot be PROVEN a duplicate, so collapsing it would trade
+    // over-counting for under-counting.
+    const v = foldActivity([
+      witemsHead,
+      closeIssue(null, "2026-08-23T12:01:00Z"),
+      closeIssue(null, "2026-08-23T12:02:00Z"),
+    ]);
+    expect(v.workItemsDone).toBe(2);
+  });
+
+  test("a step with a different action does not count as a close", () => {
+    const v = foldActivity([
+      witemsHead,
+      { kind: "step", activityId: "witems-1", ts: "2026-08-23T12:01:00Z", action: "record-mr", label: "owner/repo#1" } as FlightDeckEvent,
+    ]);
+    expect(v.workItemsDone).toBe(0);
+  });
+
+  test("dedup is per-activity, not global", () => {
+    const other: FlightDeckEvent = { ...witemsHead, activityId: "witems-2" };
+    const views = fold([
+      witemsHead, closeIssue("owner/repo#1", "2026-08-23T12:01:00Z"),
+      other,
+      { ...closeIssue("owner/repo#1", "2026-08-23T12:02:00Z"), activityId: "witems-2" } as FlightDeckEvent,
+    ]);
+    expect(views.get("witems-1")?.workItemsDone).toBe(1);
+    expect(views.get("witems-2")?.workItemsDone).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // #34 — `detail` arrives as a JSON STRING from the kit's emitter.
 //
 // `wave-status emit --detail '{"planTotal": 3}'` passes the argparse value
