@@ -72,6 +72,12 @@ The stack declares a named volume `flightdeck_data` (driver `local`) mounted at
 view. No action needed for a single-node Swarm; Docker creates it on first deploy.
 For **multi-node**, see the volume SEAM below so state survives rescheduling.
 
+Note for later: `flightdeck_data` is the **stack-file key**, not the volume
+Docker actually creates — Swarm namespaces it as `<stack>_<key>`, i.e.
+`flightdeck_flightdeck_data` for a stack deployed as `flightdeck` (step 6).
+Matters if you ever need to `docker run -v` against it directly — see
+"Repairing accumulated bad state" below.
+
 ## 4. Wire ingress (SEAM — you fill this)
 
 FlightDeck listens on `:8080` and is **not** meant to be published directly. Attach
@@ -167,6 +173,65 @@ curl -sS -X POST "https://<ingress-host>/ingest" \
        "label":"deploy smoke test","detail":{"synthetic":true}}'
 # expect: 202
 ```
+
+### Repairing accumulated bad state (#25)
+
+The JSONL event log under `/data` is **append-only with no prune, no TTL, no
+admin/delete route** — a card built from malformed or stale events (a fixed
+emit-side bug, a fragmented campaign) stays broken forever; restarting the
+service does not help, because `rebuild()` re-folds the **entire** log into a
+fresh SQLite view on every boot. (Duplicate `promoted`/`close-issue` events
+are NOT in this category as of #27 — the reducer dedups both, live and on
+rebuild; a wipe buys nothing against that symptom specifically.)
+
+**Wiping `/data/flightdeck.db` alone is a no-op.** It self-heals from the log
+by design (see "State model" below) — the rebuilt view reproduces the exact
+same bad cards. The file that actually needs to change is `events.jsonl`.
+
+If the console is confusing in a way that traces to old events rather than a
+live defect (check open issues for a currently-reproducing cause first — a
+wipe throws away real campaign history and should not be the first thing you
+reach for), the supported repair is a **backup-first log wipe**, done with no
+campaign in flight (a live campaign's card would rebuild from post-wipe
+events only and render starved — the exact symptom you're clearing).
+
+**Find the node and the real volume name first — do not guess either.** The
+named volume in the stack file is `flightdeck_data`, but Swarm namespaces a
+non-external volume as `<stack>_<key>` on deploy, so the volume `docker run`
+must mount is **`flightdeck_flightdeck_data`**, not the bare stack-file key —
+and on a multi-node Swarm, `driver: local` (see the Volume durability SEAM
+below) pins it to whichever node the service task actually ran on, which may
+not be the manager you're typing on. Running the repair against the wrong
+name or the wrong node produces the same silent failure either way: `docker
+run -v <wrong-name>:/d` creates a **new, empty** volume, `cp` fails to find
+`events.jsonl`, the `&&` chain stops before truncating anything, and you're
+left with an orphan volume and the original bad state fully intact — while
+the two `service scale` lines still print as if the repair worked.
+
+```sh
+# Resolve the node that owns the volume, and the volume's real name.
+docker service ps flightdeck_flightdeck --format '{{.Node}}'
+VOL=$(docker service inspect flightdeck_flightdeck \
+  --format '{{range .Spec.TaskTemplate.ContainerSpec.Mounts}}{{.Source}}{{end}}')
+
+# Run the following ON that node.
+docker service scale flightdeck_flightdeck=0
+docker run --rm -v "$VOL":/d alpine sh -c \
+  'cp /d/events.jsonl /d/events.jsonl.bak-$(date +%Y%m%dT%H%M%S) && : > /d/events.jsonl && rm -f /d/flightdeck.db'
+docker service scale flightdeck_flightdeck=1
+```
+
+The backup filename is second-granular, not day-granular — a same-day retry
+must not silently overwrite it with an already-truncated log. Keep the
+`.bak` file: it is the only surviving evidence of any bad events it
+contained, and is the regression corpus for validating a fix aimed at
+whatever caused them.
+
+**No retention/cutoff policy exists yet.** A wipe is a one-time reset, not a
+standing remedy — unbounded append with a full re-fold on every boot is also
+an unbounded startup cost, and the log will accumulate again. This is a real
+open design decision (a TTL? an event cap? an operator-triggered prune
+route?), not yet made; tracked on flightdeck#25.
 
 ---
 
