@@ -273,6 +273,11 @@ main { padding: 16px; }
 .fd-presence-count { font-variant-numeric: tabular-nums; color: var(--cyan); }
 .fd-presence-stalecount { color: var(--amber); }
 .fd-presence-host, .fd-presence-last { color: var(--muted); }
+.fd-presence-last[data-stale="true"] { color: var(--amber); }
+/* #51: the presence chip's own named holes (unparseable timestamp / clock
+   skew), same de-emphasised-italic treatment as .fd-card-age-hole /
+   .fd-row-lastevent-hole. */
+.fd-presence-last-hole { font-style: italic; }
 /* split-ETA headline strip (S3.4) */
 .fd-eta-strip { display: flex; gap: 24px; align-items: flex-end; padding: 12px 0; }
 .fd-eta-figure { display: flex; flex-direction: column; }

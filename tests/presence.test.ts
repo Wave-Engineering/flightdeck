@@ -151,6 +151,26 @@ describe("buildPresence", () => {
     );
     expect(roster[0]?.lastSeenMs).toBe(60_000);
   });
+
+  // #51: lastSeenMs is deliberately NOT clamped to 0 here — a future-dated event
+  // (clock skew between the emitting host and the FlightDeck server) must stay
+  // negative so the render layer can report it as a named hole, same AX-2
+  // contract as the card/row age chip (cc-workflow#1146 step 2 / flightdeck#50).
+  test("lastSeenMs goes negative on a future-dated event, not clamped to 0", () => {
+    const roster = buildPresence(
+      [session("t", { agent: "babelfish", ts: "2026-07-22T12:05:00Z" })], // 5 min AFTER now
+      { now: NOW, staleMs: STALE_MS },
+    );
+    expect(roster[0]?.lastSeenMs).toBe(-300_000);
+  });
+
+  test("lastSeenMs is null when no session has a parseable timestamp", () => {
+    const roster = buildPresence(
+      [session("t", { agent: "babelfish", ts: "not-a-date" })],
+      { now: NOW, staleMs: STALE_MS },
+    );
+    expect(roster[0]?.lastSeenMs).toBeNull();
+  });
 });
 
 describe("renderPresenceStrip", () => {
@@ -211,6 +231,45 @@ describe("renderPresenceStrip", () => {
     );
     expect(html).toContain("babelfish");
     expect(html).not.toContain("unattributed");
+  });
+
+  // #51: the chip's "last seen" readout goes through the SAME renderAgeChip
+  // contract as the card/row age chip (AX-6) — these pin the two hole cases
+  // that were previously a fabricated "0s ago" and a silently omitted span.
+
+  test("a future-dated (clock-skewed) session renders a named clock-skew hole, never a fabricated '0s ago'", () => {
+    const html = renderPresenceStrip(
+      buildPresence(
+        [session("x", { agent: "babelfish", ts: "2026-07-22T12:05:00Z" })], // 5 min AFTER now
+        { now: NOW, staleMs: STALE_MS },
+      ),
+    );
+    expect(html).toContain("fd-presence-last fd-presence-last-hole");
+    expect(html).toContain("clock skew");
+    expect(html).not.toContain("0s ago");
+  });
+
+  test("a session with no parseable timestamp renders a named 'age unknown' hole, not a silently omitted span", () => {
+    const html = renderPresenceStrip(
+      buildPresence(
+        [session("x", { agent: "babelfish", ts: "not-a-date" })],
+        { now: NOW, staleMs: STALE_MS },
+      ),
+    );
+    expect(html).toContain("fd-presence-last fd-presence-last-hole");
+    expect(html).toContain("age unknown");
+  });
+
+  test("the normal (fresh, known-age) case is unchanged: 'Xs ago', un-holed", () => {
+    const html = renderPresenceStrip(
+      buildPresence(
+        [session("x", { agent: "babelfish", ts: "2026-07-22T11:59:00Z" })], // 60s before now
+        { now: NOW, staleMs: STALE_MS },
+      ),
+    );
+    expect(html).toContain('class="fd-presence-last"');
+    expect(html).not.toContain("fd-presence-last-hole");
+    expect(html).toContain("1m ago"); // formatDuration(60_000) === "1m"
   });
 });
 
