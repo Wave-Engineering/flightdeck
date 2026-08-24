@@ -560,6 +560,197 @@ describe("work-items done/total (cc-workflow#1154)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// cc-workflow#1157 — work-items done/total at WAVE scope. The denominator
+// (`waveWorkItems`) ships once, at campaign-head time, as a static
+// per-wave map from the plan. The numerator is derived in a POST-loop pass
+// over `close-issue` steps filtered by the FINAL `currentWave` — the key
+// property under test is that a close under an EARLIER wave must not leak
+// into a LATER wave's count once the campaign has moved on.
+
+const waveHead: FlightDeckEvent = {
+  kind: "activity_start",
+  activityId: "wwitems-1",
+  ts: "2026-08-24T09:00:00Z",
+  activityType: "campaign",
+  label: "wave-witems-campaign",
+  detail: { planTotal: 2, workItemsTotal: 5, waveWorkItems: { "wave-1": 3, "wave-2": 2 } },
+};
+
+// `closeIssue` (defined above, #1154's tests) hardcodes `activityId:
+// "witems-1"` — harmless for a direct `foldActivity()` call (it doesn't
+// filter by the field), but wrong for `fold()`'s per-activity grouping,
+// which DOES respect it. A dedicated helper avoids silently mis-grouping
+// events in the multi-activity test below.
+const waveCloseIssue = (ref: string | null, ts: string, wave: string): FlightDeckEvent =>
+  ({
+    kind: "step",
+    activityId: "wwitems-1",
+    ts,
+    action: "close-issue",
+    wave,
+    ...(ref === null ? {} : { label: ref }),
+  }) as FlightDeckEvent;
+
+// A POSITION-bearing event — establishes currentWave the way a real
+// campaign does (activity_start, phase, a non-close-issue step). Since
+// review round 3, close-issue's `wave` tag is excluded from the
+// currentWave latch (fold.ts) — it's the closed issue's own plan wave, a
+// static attribute, not a position update. Tests below that need a
+// specific currentWave must set it via this, not via waveCloseIssue.
+const wavePosition = (wave: string, ts: string): FlightDeckEvent =>
+  ({ kind: "phase", activityId: "wwitems-1", ts, wave, action: "planning" }) as FlightDeckEvent;
+
+describe("wave-scope work-items done/total (cc-workflow#1157)", () => {
+  test("waveWorkItemsTotal resolves the CURRENT wave's entry from the map", () => {
+    const v = foldActivity([
+      waveHead,
+      wavePosition("wave-1", "2026-08-24T09:00:30Z"),
+      waveCloseIssue("owner/repo#1", "2026-08-24T09:01:00Z", "wave-1"),
+    ]);
+    expect(v.currentWave).toBe("wave-1");
+    expect(v.waveWorkItemsTotal).toBe(3); // wave-1's entry, not wave-2's or the campaign total
+    expect(v.waveWorkItemsDone).toBe(1);
+  });
+
+  test("a close under an EARLIER wave does not count once the campaign has moved on", () => {
+    // The exact case that makes this scope non-trivial: wave-1 sees a close,
+    // then the campaign promotes to wave-2. wave-2's numerator must start
+    // fresh at 0, not inherit wave-1's close.
+    const v = foldActivity([
+      waveHead,
+      waveCloseIssue("owner/repo#1", "2026-08-24T09:01:00Z", "wave-1"),
+      waveCloseIssue("owner/repo#2", "2026-08-24T09:02:00Z", "wave-1"),
+      // wave transition — any event carrying wave:"wave-2" advances currentWave.
+      { kind: "step", activityId: "wwitems-1", ts: "2026-08-24T09:03:00Z", label: "promoted", wave: "wave-1" } as FlightDeckEvent,
+      { kind: "phase", activityId: "wwitems-1", ts: "2026-08-24T09:04:00Z", wave: "wave-2", action: "planning" } as FlightDeckEvent,
+    ]);
+    expect(v.currentWave).toBe("wave-2");
+    expect(v.waveWorkItemsTotal).toBe(2); // wave-2's entry
+    expect(v.waveWorkItemsDone).toBe(0); // NOT 2 — those closes were under wave-1
+  });
+
+  test("a straggler close for an EARLIER wave does NOT move currentWave backward (review round 3)", () => {
+    // The core round-3 fix, isolated: close-issue's `wave` tag is the
+    // closed issue's OWN plan wave (a static attribute post cc-workflow
+    // #1157's emit-side fix), not a position update — so it must NOT
+    // participate in the currentWave last-write-wins latch the way
+    // activity_start/phase/promoted steps do. Position is set to wave-2;
+    // a wave-1 straggler is then closed (a real, ROUTINE shape — an
+    // operator closing a deferred issue after the campaign has advanced,
+    // not merely a rare re-fire/replay). currentWave must stay wave-2.
+    //
+    // This is deliberately the ONLY test in this file that would pass
+    // 102/102 unchanged if the latch exclusion were reverted while every
+    // other wave-scope test here keeps its position event and close-issue
+    // event pointed at the SAME wave — this is the one that isolates the
+    // property those coincidentally can't.
+    const v = foldActivity([
+      waveHead,
+      wavePosition("wave-2", "2026-08-24T09:00:30Z"),
+      waveCloseIssue("owner/repo#1", "2026-08-24T09:01:00Z", "wave-1"), // straggler
+    ]);
+    expect(v.currentWave).toBe("wave-2"); // NOT "wave-1" — the close must not move position
+    expect(v.waveWorkItemsTotal).toBe(2); // wave-2's denominator
+    expect(v.waveWorkItemsDone).toBe(0); // the straggler was wave-1's, doesn't count toward wave-2
+  });
+
+  test("closes under the current wave count once the campaign has moved past a prior wave", () => {
+    const v = foldActivity([
+      waveHead,
+      waveCloseIssue("owner/repo#1", "2026-08-24T09:01:00Z", "wave-1"),
+      { kind: "phase", activityId: "wwitems-1", ts: "2026-08-24T09:02:00Z", wave: "wave-2", action: "planning" } as FlightDeckEvent,
+      waveCloseIssue("owner/repo#2", "2026-08-24T09:03:00Z", "wave-2"),
+    ]);
+    expect(v.currentWave).toBe("wave-2");
+    expect(v.waveWorkItemsTotal).toBe(2);
+    expect(v.waveWorkItemsDone).toBe(1); // only owner/repo#2, the wave-2 close
+  });
+
+  test("a LATE-ARRIVING position event for an earlier wave moves currentWave backward — known, pinned behavior (code review)", () => {
+    // currentWave is last-write-wins over POSITION-bearing events
+    // (activity_start/phase/non-close-issue steps — close-issue's own
+    // `wave` no longer contributes at all, review round 3), same as every
+    // other scope tag in this reducer for the events that DO set it — not
+    // special-cased for this feature, and NOT something #1157 can fix
+    // without changing that reducer-wide convention. Code review flagged
+    // this as consequential specifically for a done/total FRACTION
+    // (silently attributing it to a stale wave) in a way it wasn't for a
+    // coarse currentWave label — the mitigation is card.ts naming the wave
+    // IN the cell label ("work items (wave-1)", not a bare "work items
+    // (wave)"), so a stale attribution is visible/auditable rather than
+    // silently wrong.
+    //
+    // Pins BOTH directions in one fixture, not just that currentWave can
+    // move backward (review M3 — a single close only proves a mutant that
+    // always returns 0 would also pass): a wave-2 close that must NOT
+    // count once we're back at wave-1, AND a wave-1 close that MUST count
+    // — proving the numerator actually reconstructs the earlier wave's
+    // real fraction rather than just reading as "empty" after the move.
+    const v = foldActivity([
+      waveHead,
+      wavePosition("wave-2", "2026-08-24T09:00:30Z"),
+      waveCloseIssue("owner/repo#1", "2026-08-24T09:01:00Z", "wave-2"),
+      // A late/reordered POSITION event re-asserts wave-1 as current — e.g.
+      // a resumed replay of wave-1's own rows arriving after wave-2's.
+      { kind: "step", activityId: "wwitems-1", ts: "2026-08-24T09:02:00Z", label: "promoted", wave: "wave-1" } as FlightDeckEvent,
+      waveCloseIssue("owner/repo#2", "2026-08-24T09:03:00Z", "wave-1"),
+    ]);
+    expect(v.currentWave).toBe("wave-1"); // moved BACKWARD — last-write-wins, as designed
+    expect(v.waveWorkItemsTotal).toBe(3); // wave-1's denominator, not wave-2's
+    expect(v.waveWorkItemsDone).toBe(1); // owner/repo#2 (wave-1) counts; owner/repo#1 (wave-2) does not
+  });
+
+  test("a re-fired close for the SAME ref, same wave, counts once", () => {
+    const v = foldActivity([
+      waveHead,
+      wavePosition("wave-1", "2026-08-24T09:00:30Z"),
+      waveCloseIssue("owner/repo#1", "2026-08-24T09:01:00Z", "wave-1"),
+      waveCloseIssue("owner/repo#1", "2026-08-24T09:01:05Z", "wave-1"),
+    ]);
+    expect(v.waveWorkItemsDone).toBe(1);
+  });
+
+  test("a close with no label still counts — dedup requires identity", () => {
+    const v = foldActivity([
+      waveHead,
+      wavePosition("wave-1", "2026-08-24T09:00:30Z"),
+      waveCloseIssue(null, "2026-08-24T09:01:00Z", "wave-1"),
+      waveCloseIssue(null, "2026-08-24T09:02:00Z", "wave-1"),
+    ]);
+    expect(v.waveWorkItemsDone).toBe(2);
+  });
+
+  test("no currentWave ⇒ waveWorkItemsTotal null, waveWorkItemsDone 0 — not a guessed value", () => {
+    const v = foldActivity([waveHead]); // no wave-carrying event at all
+    expect(v.currentWave).toBeNull();
+    expect(v.waveWorkItemsTotal).toBeNull();
+    expect(v.waveWorkItemsDone).toBe(0);
+  });
+
+  test("current wave absent from the map ⇒ waveWorkItemsTotal null (a real hole, not 0)", () => {
+    const v = foldActivity([
+      waveHead,
+      wavePosition("wave-9", "2026-08-24T09:00:30Z"), // not in the map
+      waveCloseIssue("owner/repo#1", "2026-08-24T09:01:00Z", "wave-9"),
+    ]);
+    expect(v.currentWave).toBe("wave-9");
+    expect(v.waveWorkItemsTotal).toBeNull();
+  });
+
+  test("dedup is per-activity, not global", () => {
+    const other: FlightDeckEvent = { ...waveHead, activityId: "wwitems-2" };
+    const views = fold([
+      waveHead, wavePosition("wave-1", "2026-08-24T09:00:30Z"),
+      waveCloseIssue("owner/repo#1", "2026-08-24T09:01:00Z", "wave-1"),
+      other, { ...wavePosition("wave-1", "2026-08-24T09:00:30Z"), activityId: "wwitems-2" } as FlightDeckEvent,
+      { ...waveCloseIssue("owner/repo#1", "2026-08-24T09:02:00Z", "wave-1"), activityId: "wwitems-2" } as FlightDeckEvent,
+    ]);
+    expect(views.get("wwitems-1")?.waveWorkItemsDone).toBe(1);
+    expect(views.get("wwitems-2")?.waveWorkItemsDone).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // #34 — `detail` arrives as a JSON STRING from the kit's emitter.
 //
 // `wave-status emit --detail '{"planTotal": 3}'` passes the argparse value
