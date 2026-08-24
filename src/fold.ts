@@ -18,8 +18,14 @@
 //     correctly once one of its events declares a type. An activity that never
 //     declares one at all stays "headless": that is a hole (AX-2), not a campaign.
 //   • activity_start may additionally carry a `detail` object with `planTotal`
-//     (campaign wave denominator) and/or `cord` (float leg cap).
+//     (campaign wave denominator), `cord` (float leg cap), `workItemsTotal`
+//     (campaign-scope work-item denominator, cc-workflow#1154), and/or
+//     `waveWorkItems` (a `{waveId: count}` per-wave work-item denominator
+//     map, cc-workflow#1157).
 //   • a landed/promoted campaign wave  → `{ kind:"step", label:"promoted", wave }`.
+//   • a closed work item               → `{ kind:"step", action:"close-issue", wave, label:<issue ref> }`,
+//     counted at campaign scope always and at wave scope when `wave` matches
+//     the activity's current wave (cc-workflow#1154 / #1157).
 //   • a lazyriver float leg            → `{ kind:"step", label:"leg", detail:{ leg:N } }`.
 //   • metric events set the latest value per `metric` name; `findings-velocity`
 //     history is retained (for the float converge/explore trend).
@@ -86,6 +92,12 @@ export interface ActivityView {
   legs: number; // float legs so far
   workItemsTotal: number | null; // campaign work-item denominator (cc-workflow#1154)
   workItemsDone: number; // closed work items, campaign scope
+  /** Raw per-wave denominator map, `{waveId: issueCount}` (cc-workflow#1157).
+   *  Parsed as-is from the campaign head; `waveWorkItemsTotal`/`waveWorkItemsDone`
+   *  below are the DERIVED values for the activity's current wave. */
+  waveWorkItems: Record<string, number> | null;
+  waveWorkItemsTotal: number | null; // waveWorkItems[currentWave] ?? null
+  waveWorkItemsDone: number; // closed work items, current-wave scope
   // metrics
   metrics: Record<string, MetricSample>;
   findingsVelocity: number[]; // float converge/explore trend
@@ -145,6 +157,20 @@ function numOrNull(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
+/** Validate `waveWorkItems`'s shape (cc-workflow#1157): a plain object whose
+ *  values are numbers. Non-object/array/null input is rejected outright;
+ *  individual non-numeric entries are dropped rather than failing the whole
+ *  map, same forgiving-per-field style as the rest of this parsing layer. */
+function numberRecordOrNull(v: unknown): Record<string, number> | null {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
+  const out: Record<string, number> = {};
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    const n = numOrNull(val);
+    if (n !== null) out[k] = n;
+  }
+  return out;
+}
+
 /**
  * Fold ONE activity's events (in log order) into its view. This is the single
  * reducer; `fold()` below just groups then delegates here. Caller guarantees
@@ -187,6 +213,9 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
     legs: 0,
     workItemsTotal: null,
     workItemsDone: 0,
+    waveWorkItems: null,
+    waveWorkItemsTotal: null,
+    waveWorkItemsDone: 0,
     metrics: {},
     findingsVelocity: [],
     concerns: [],
@@ -202,7 +231,23 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
 
     // Scope tags accumulate last-write-wins (ignore null/absent).
     if (typeof e.phase === "string") v.currentPhase = e.phase;
-    if (typeof e.wave === "string") v.currentWave = e.wave;
+    // close-issue's `wave` is NOT a position update (cc-workflow#1157 review
+    // round 3): the emitter tags it with the CLOSED ISSUE'S OWN plan wave
+    // (`_issue_wave_id`), a static attribute of the issue — not wherever the
+    // campaign's current_wave pointer happened to be. Before that fix this
+    // WAS a position-consistent tag and latching it was correct; now, an
+    // operator closing a deferred wave-1 straggler while the campaign is at
+    // wave-3 would otherwise flip `currentWave` backward to "wave-1" — which
+    // cascades well beyond the wave-scope work-items cell (e.g.
+    // push_discord.ts reports "wave wave-1" in every alert until the next
+    // real position-bearing event). Excluding it here is safe for the
+    // wave-scope numerator itself: that's computed in a POST-loop pass that
+    // filters the raw `events` array by `e.wave === v.currentWave`
+    // independently of this incremental latch, so it only needs
+    // `currentWave`'s FINAL value to be a real position — which this
+    // exclusion is what makes true.
+    const isIssueWaveTag = e.kind === "step" && e.action === "close-issue";
+    if (typeof e.wave === "string" && !isIssueWaveTag) v.currentWave = e.wave;
     if (e.flight !== null && e.flight !== undefined) v.currentFlight = e.flight;
     // Length-guarded, matching the `label` latch below. An emitter shipping
     // `--agent "$DEV_NAME"` with the variable unset sends "", and an unguarded
@@ -264,6 +309,8 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
           if (cord !== null) v.cord = cord;
           const wit = numOrNull(d["workItemsTotal"]);
           if (wit !== null) v.workItemsTotal = wit;
+          const wwi = numberRecordOrNull(d["waveWorkItems"]);
+          if (wwi !== null) v.waveWorkItems = wwi;
         }
         break;
       }
@@ -325,14 +372,23 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
         // the right key and it is a separate change.
         if (e.label === "leg") v.legs += 1;
         // A closed work item (`wave-status close_issue`, cc-workflow
-        // state.py:1302) → `{kind:"step", action:"close-issue", label:<issue
-        // ref>}`. Same dedup shape as `promoted` above and for the same
-        // reason: the identity is the issue ref (`label`), not the wave —
-        // an issue can be closed while the card's `currentWave` has since
-        // moved on, and re-keying on wave would either miss it or migrate
-        // it to the wrong wave's bucket. Campaign scope only (cc-workflow
-        // #1154); wave-scope work-item counts need a wave-level total this
-        // event does not carry and remain open on cc-workflow#1146.
+        // state.py's `close_issue`) → `{kind:"step", action:"close-issue",
+        // wave:<issue's OWN plan wave>, label:<issue ref>}`. Same dedup
+        // shape as `promoted` above and for the same reason: the identity
+        // is the issue ref (`label`), not the wave — re-keying on wave
+        // would either miss an unidentifiable close or migrate it to the
+        // wrong wave's bucket.
+        //
+        // The `wave` tag here is the CLOSED ISSUE'S plan wave (resolved by
+        // `_issue_wave_id`), a static attribute — NOT a position update, and
+        // NOT (as of cc-workflow#1157 review round 3) latched into
+        // `currentWave` above; see that latch's own comment for why. Before
+        // that fix the tag WAS `current_wave` at close time, which made
+        // latching it correct; the comment here predates the fix and is
+        // corrected now. Campaign scope always accrues (below); wave scope
+        // (cc-workflow#1157) accrues only when `e.wave` equals the FINAL
+        // `currentWave`, computed in the post-loop pass at the bottom of
+        // this function — see there for the full rationale.
         if (e.action === "close-issue") {
           const ref = typeof e.label === "string" ? e.label : null;
           if (ref === null || !countedCloses.has(ref)) {
@@ -402,6 +458,46 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
   }
 
   v.openConcerns = v.concerns.length;
+
+  // Wave-scope work items (cc-workflow#1157): derived in a POST-loop pass,
+  // not incrementally during the loop above, because the denominator lookup
+  // needs the FINAL `currentWave` — which is NOT guaranteed to advance
+  // monotonically over the stream (a late tee re-fire, a resumed replay —
+  // see the promotion-dedup tests above, and the currentWave latch's own
+  // comment for why close-issue steps specifically no longer contribute to
+  // it at all as of review round 3). Re-scans `events` rather than the
+  // folded array only once, which is cheap at the event volumes a single
+  // activity carries.
+  if (v.waveWorkItems !== null && v.currentWave !== null) {
+    const total = v.waveWorkItems[v.currentWave];
+    if (typeof total === "number") v.waveWorkItemsTotal = total;
+  }
+  if (v.currentWave !== null) {
+    // Same dedup shape as the campaign-scope `countedCloses` collector
+    // above, scoped to closes emitted under the CURRENT wave specifically.
+    // `close_issue()` tags each close with the CLOSED ISSUE'S OWN plan wave
+    // (`_issue_wave_id`, cc-workflow state.py) — a static attribute of the
+    // issue, not wherever the campaign's position happened to be at close
+    // time. That's what makes filtering by `e.wave === currentWave` here
+    // correct rather than coincidental: this is comparing "which wave does
+    // this issue belong to" against "which wave is the campaign at", two
+    // independently-sourced facts, not the same pointer read twice. An
+    // unidentifiable close (no label) still counts, same rationale as the
+    // campaign-scope collector: collapsing it would trade over-counting
+    // for under-counting.
+    const countedWaveCloses = new Set<string>();
+    let waveDone = 0;
+    for (const e of events) {
+      if (e.kind !== "step" || e.action !== "close-issue" || e.wave !== v.currentWave) continue;
+      const ref = typeof e.label === "string" ? e.label : null;
+      if (ref === null || !countedWaveCloses.has(ref)) {
+        if (ref !== null) countedWaveCloses.add(ref);
+        waveDone += 1;
+      }
+    }
+    v.waveWorkItemsDone = waveDone;
+  }
+
   return v;
 }
 

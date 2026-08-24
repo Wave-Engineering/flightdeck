@@ -120,7 +120,7 @@ describe("work-items done/total cell — campaign scope only (cc-workflow#1154)"
     // AX-2: the pair is atomic. A numerator is meaningless without a known
     // denominator — "0 / ?" is a false "we've observed zero", not a hole.
     const html = renderCard(campaignModel());
-    expect(html).toContain(">work items<");
+    expect(html).toContain(">work items (campaign)<");
     expect(html).not.toContain("0 / ?");
     expect(html).toContain('class="fd-metric-hole"');
     expect(html).toContain("workItemsTotal denominator"); // names WHICH hole this is
@@ -128,7 +128,8 @@ describe("work-items done/total cell — campaign scope only (cc-workflow#1154)"
 
   test("a float card never shows the work-items cell — not applicable, not a hole", () => {
     const html = renderCard(floatModel());
-    expect(html).not.toContain(">work items<");
+    expect(html).not.toContain("work items (campaign)");
+    expect(html).not.toContain("work items (wave");
   });
 
   test("a campaign with workItemsTotal + closed work items shows the real fraction", () => {
@@ -138,8 +139,69 @@ describe("work-items done/total cell — campaign scope only (cc-workflow#1154)"
       ev({ kind: "step", activityId: "wi1", ts: "2026-08-23T10:06:00Z", action: "close-issue", label: "owner/repo#2" }),
     ]);
     const html = renderCard(m);
-    expect(html).toContain(">work items<");
+    expect(html).toContain(">work items (campaign)<");
     expect(html).toContain("2 / 5");
+  });
+});
+
+describe("work-items done/total cell — wave scope (cc-workflow#1157)", () => {
+  test("no current wave ⇒ a NAMED hole distinct from the 'no denominator shipped' hole", () => {
+    const m = model([
+      ev({ kind: "activity_start", activityId: "wwc0", ts: "2026-08-24T10:00:00Z", activityType: "campaign", detail: { planTotal: 2 } }),
+      // no wave-carrying event at all — currentWave stays null.
+    ]);
+    const html = renderCard(m);
+    expect(html).toContain(">work items (wave)<");
+    expect(html).not.toContain("0 / ?");
+    expect(html).toContain("no wave is current");
+  });
+
+  test("a current wave with no waveWorkItems entry ⇒ a hole naming THAT gap specifically", () => {
+    const m = model([
+      ev({ kind: "activity_start", activityId: "wwc1", ts: "2026-08-24T10:00:00Z", activityType: "campaign", detail: { planTotal: 2, waveWorkItems: { "wave-1": 3 } } }),
+      // close-issue's own `wave` no longer sets currentWave (review round
+      // 3) — a real position event establishes it.
+      ev({ kind: "phase", activityId: "wwc1", ts: "2026-08-24T10:04:00Z", wave: "wave-9", action: "planning" }),
+      ev({ kind: "step", activityId: "wwc1", ts: "2026-08-24T10:05:00Z", action: "close-issue", label: "owner/repo#1", wave: "wave-9" }),
+    ]);
+    const html = renderCard(m);
+    // The label names the wave (code review: a bare "work items (wave)" label
+    // hides which wave a possibly-stale currentWave actually names).
+    expect(html).toContain(">work items (wave-9)<");
+    expect(html).not.toContain("0 / ?");
+    expect(html).toContain("no entry for the current wave");
+  });
+
+  test("a current wave, but NO waveWorkItems map shipped at all ⇒ a hole naming THAT gap, not the 'no entry' one", () => {
+    // Code review (Important #1): the first draft collapsed this into the
+    // "map has no entry" copy, which is false when there's no map at all —
+    // the dominant shape for every campaign card built from a pre-#1157 head.
+    const m = model([
+      ev({ kind: "activity_start", activityId: "wwc3", ts: "2026-08-24T10:00:00Z", activityType: "campaign", detail: { planTotal: 2 } }), // no waveWorkItems key
+      ev({ kind: "phase", activityId: "wwc3", ts: "2026-08-24T10:04:00Z", wave: "wave-1", action: "planning" }),
+      ev({ kind: "step", activityId: "wwc3", ts: "2026-08-24T10:05:00Z", action: "close-issue", label: "owner/repo#1", wave: "wave-1" }),
+    ]);
+    const html = renderCard(m);
+    expect(html).toContain(">work items (wave-1)<");
+    expect(html).not.toContain("0 / ?");
+    expect(html).toContain("no activity_start on this campaign has shipped a waveWorkItems map");
+    expect(html).not.toContain("no entry for the current wave");
+  });
+
+  test("a campaign with waveWorkItems + a current-wave close shows the real fraction, wave id in the label", () => {
+    const m = model([
+      ev({ kind: "activity_start", activityId: "wwc2", ts: "2026-08-24T10:00:00Z", activityType: "campaign", detail: { planTotal: 2, waveWorkItems: { "wave-1": 3, "wave-2": 2 } } }),
+      ev({ kind: "phase", activityId: "wwc2", ts: "2026-08-24T10:04:00Z", wave: "wave-1", action: "planning" }),
+      ev({ kind: "step", activityId: "wwc2", ts: "2026-08-24T10:05:00Z", action: "close-issue", label: "owner/repo#1", wave: "wave-1" }),
+    ]);
+    const html = renderCard(m);
+    expect(html).toContain(">work items (wave-1)<");
+    expect(html).toContain("1 / 3");
+  });
+
+  test("a float card never shows the wave-scope work-items cell either", () => {
+    const html = renderCard(floatModel());
+    expect(html).not.toContain("work items (wave");
   });
 });
 

@@ -76,30 +76,83 @@ function metricCell(label: string, value: string): string {
   );
 }
 
-/** Work-items done/total (cc-workflow#1146 step 4, campaign scope — #1154).
- *  Campaign-only: a float's estimator is legs/cord, and `workItemsTotal` is
- *  never shipped for a float — rendering the cell there would read as "not
- *  tracked yet" rather than the true "not applicable" (AX-2's hole-naming
- *  distinguishes the two). `null` (omit the cell) covers that.
- *
- *  AX-2's pair is atomic: a numerator is only meaningful against a KNOWN
- *  denominator, so an unknown `workItemsTotal` suppresses the numerator too
- *  — "?" alone, never "0 / ?" (AX-2 names that exact shape as the failure
- *  this axiom exists to prevent). Deliberately NOT the same
+/** Shared work-items done/total cell renderer (cc-workflow#1146 step 4 —
+ *  campaign scope #1154, wave scope #1157). Both scopes hit the same AX-2
+ *  discipline: the pair is atomic, so an unknown denominator suppresses the
+ *  numerator too — "?" alone, never "0 / ?" (AX-2 names that exact shape as
+ *  the failure this axiom exists to prevent). Deliberately NOT the same
  *  numerator-shown-regardless-of-denominator convention `renderProgress`
  *  above uses — that pattern predates this cell, and inheriting it here
  *  would just be a second instance of the same violation, not a reason to
- *  keep it. The hole also carries a title naming WHICH kind of gap it is
- *  (an un-shipped denominator, not an emit failure), mirroring the headless
- *  progress hole's `title` above. */
+ *  keep it. *holeTitle* names WHICH kind of gap it is (an un-shipped
+ *  denominator vs. no current wave, e.g.) — a bare "?" with no explanation
+ *  is a second hole (AX-2). */
+function renderWorkItemsFractionCell(
+  label: string,
+  done: number,
+  total: number | null,
+  holeTitle: string,
+): string {
+  if (total === null) {
+    const hole = `<span class="fd-metric-hole" title="${escapeHtml(holeTitle)}">?</span>`;
+    return metricCell(label, hole);
+  }
+  return metricCell(label, `${done} / ${total}`);
+}
+
+/** Campaign-scope work-items cell. Campaign-only: a float's estimator is
+ *  legs/cord, and neither work-items denominator is ever shipped for a
+ *  float — rendering either cell there would read as "not tracked yet"
+ *  rather than the true "not applicable" (AX-2's hole-naming distinguishes
+ *  the two). `null` (omit the cell) covers that. */
 function renderWorkItemsCell(view: ActivityView): string | null {
   if (view.activityType !== "campaign") return null;
-  if (view.workItemsTotal === null) {
-    const hole =
-      `<span class="fd-metric-hole" title="no activity_start on this campaign has shipped a workItemsTotal denominator">?</span>`;
-    return metricCell("work items", hole);
-  }
-  return metricCell("work items", `${view.workItemsDone} / ${view.workItemsTotal}`);
+  return renderWorkItemsFractionCell(
+    "work items (campaign)",
+    view.workItemsDone,
+    view.workItemsTotal,
+    "no activity_start on this campaign has shipped a workItemsTotal denominator",
+  );
+}
+
+/** Wave-scope work-items cell (cc-workflow#1157). Campaign-only, same
+ *  reasoning as the campaign-scope cell. THREE distinct causes of a null
+ *  denominator, not two — code review caught the first draft collapsing
+ *  "no head has shipped a waveWorkItems map at all" into the "map exists,
+ *  no entry for this wave" copy, which is false for every card built from
+ *  a pre-#1157 campaign head (the dominant shape while this convention is
+ *  new). AX-2: a wrong explanation is a second hole.
+ *
+ *  The label itself carries the wave id (`work items (wave-2)`, not a bare
+ *  `work items (wave)`) for a second reason, also from review: `currentWave`
+ *  is last-write-wins over the position-bearing events that set it
+ *  (`activity_start`/`phase`/non-close-issue `step`s — close-issue's own
+ *  `wave` tag was EXCLUDED from that latch in review round 3, precisely
+ *  because it names the closed issue's plan wave, not the campaign's
+ *  position), so a genuinely late/reordered POSITION event (a stale tee
+ *  re-fire, a resumed replay — both real shapes this reducer already has
+ *  to dedup elsewhere, see the promotion-dedup tests) can still make
+ *  `currentWave` read an EARLIER wave than the campaign has actually
+ *  reached. Naming the wave in the label makes that residual staleness
+ *  visible and auditable against what the operator otherwise knows about
+ *  the campaign, rather than silently attributing a done/total fraction to
+ *  the wrong wave under a generic label — AX-1's "display only what the
+ *  data says" cuts both ways: show the wave id, don't hide it. */
+function renderWaveWorkItemsCell(view: ActivityView): string | null {
+  if (view.activityType !== "campaign") return null;
+  const label = view.currentWave === null ? "work items (wave)" : `work items (${view.currentWave})`;
+  const holeTitle =
+    view.currentWave === null
+      ? "no wave is current on this campaign yet"
+      : view.waveWorkItems === null
+        ? "no activity_start on this campaign has shipped a waveWorkItems map"
+        : "the campaign head's waveWorkItems map has no entry for the current wave";
+  return renderWorkItemsFractionCell(
+    label,
+    view.waveWorkItemsDone,
+    view.waveWorkItemsTotal,
+    holeTitle,
+  );
 }
 
 /** The full metrics grid, shown only when the card is expanded (R-14). */
@@ -118,6 +171,8 @@ function renderMetricsGrid(m: CardModel): string {
   ];
   const workItems = renderWorkItemsCell(m.view);
   if (workItems !== null) cells.push(workItems);
+  const waveWorkItems = renderWaveWorkItemsCell(m.view);
+  if (waveWorkItems !== null) cells.push(waveWorkItems);
   return `<div class="fd-metrics-grid">${cells.join("")}</div>`;
 }
 
