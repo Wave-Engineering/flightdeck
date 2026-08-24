@@ -91,9 +91,12 @@ describe("buildPresence", () => {
   });
 
   test("the emitter's OWN degradation signature (agent === host) resolves unattributed (#38 code review finding 1)", () => {
-    // The real live shape: claudecode-workflow's flightdeck-session-emit.sh sets
-    // `agent="$host"` when no Dev-Name resolves — it never leaves `agent` null. A
-    // resolver keyed only on "is agent null" would never fire on this population.
+    // The shape still live on every un-reinstalled agent: claudecode-workflow's
+    // flightdeck-session-emit.sh USED TO set `agent="$host"` when no Dev-Name
+    // resolved — it never left `agent` null. Fixed at source (cc-workflow#1151,
+    // the emitter now omits --agent entirely), but the fix isn't fleet-deployed
+    // yet, so this compatibility read stays exercised until it is. A resolver
+    // keyed only on "is agent null" would never fire on this population.
     const roster = buildPresence([session("x", { agent: "malory", host: "malory" })], { now: NOW, staleMs: STALE_MS });
     expect(roster).toHaveLength(1);
     expect(roster[0]).toMatchObject({ agent: "malory", attributed: false, hosts: ["malory"] });
