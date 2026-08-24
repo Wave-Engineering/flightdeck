@@ -6,7 +6,7 @@
 // `status` only — no re-derivation.
 
 import type { ActivityView } from "../fold.ts";
-import { type CardModel, renderCard } from "./card.ts";
+import { type CardModel, type ClockInfo, renderCard } from "./card.ts";
 
 /** The three lanes. "Idle" (stale-but-open) is a P4 wall-clock concern supplied by
  *  the watcher; a closed activity is `closed`, an open+stale one is `idle`, and any
@@ -35,17 +35,27 @@ export const DEFAULT_LAYOUT: Record<Lane, "cards" | "table"> = {
 
 /**
  * Render a grid of cards. `opts.expanded(model)` decides each card's default
- * expansion (defaults to: expanded iff not closed). Empty list → an empty-state note.
+ * expansion (defaults to: expanded iff not closed). `opts.clock(model)` threads the
+ * P4 watcher's per-model wall-clock verdict down to each card (AX-5) — same
+ * injected-clock discipline as `laneFor`'s `opts.stale` above, just fanned out over
+ * a list instead of one view, and passed as one `ClockInfo` rather than two
+ * independent fields (see that type's doc in card.ts for why). Empty list → an
+ * empty-state note.
  */
 export function renderGrid(
   models: CardModel[],
-  opts?: { expanded?: (m: CardModel) => boolean },
+  opts?: { expanded?: (m: CardModel) => boolean; clock?: (m: CardModel) => ClockInfo },
 ): string {
   if (models.length === 0) {
     return `<div class="fd-grid fd-grid-empty">no activities</div>`;
   }
   const cards = models
-    .map((m) => renderCard(m, { expanded: opts?.expanded ? opts.expanded(m) : m.view.status !== "closed" }))
+    .map((m) =>
+      renderCard(m, {
+        expanded: opts?.expanded ? opts.expanded(m) : m.view.status !== "closed",
+        clock: opts?.clock ? opts.clock(m) : undefined,
+      }),
+    )
     .join("");
   return `<div class="fd-grid">${cards}</div>`;
 }

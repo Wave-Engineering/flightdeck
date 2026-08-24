@@ -258,6 +258,51 @@ describe("card header — dev-name title + granular action status (cc#1026)", ()
   });
 });
 
+describe("staleness on the card (cc-workflow#1146 step 2, FLIGHTDECK_AXIOMS AX-5)", () => {
+  test("no clock injected at all ⇒ no data-stale attribute, no age chip (existing callers render unchanged)", () => {
+    const html = renderCard(campaignModel());
+    expect(html).not.toContain("data-stale");
+    expect(html).not.toContain("fd-card-age");
+  });
+
+  test("clock injected, stale + a known age ⇒ data-stale=true on the card AND a visible age readout", () => {
+    const html = renderCard(campaignModel(), { clock: { stale: true, ageMs: 62_000 } });
+    expect(html).toContain('<article class="fd-card"');
+    expect(html).toMatch(/data-status="active" data-stale="true" data-expanded/); // the article's own marker
+    expect(html).toContain('class="fd-card-age" data-stale="true"');
+    expect(html).toContain("1m 2s ago");
+  });
+
+  test("clock injected, fresh with a known age still shows the age, un-amber (AX-5: reported always, not only when stale)", () => {
+    const html = renderCard(campaignModel(), { clock: { stale: false, ageMs: 5_000 } });
+    expect(html).toContain('class="fd-card-age" data-stale="false"');
+    expect(html).toContain("5s ago");
+  });
+
+  test("clock injected but age unknowable (ageMs: null) ⇒ a NAMED hole, never a fabricated '— ago' or silent omission (AX-2)", () => {
+    const html = renderCard(campaignModel(), { clock: { stale: true, ageMs: null } });
+    expect(html).toContain("fd-card-age fd-card-age-hole");
+    expect(html).toContain("age unknown");
+    expect(html).toContain('title="no event on this activity carries a parseable timestamp"');
+  });
+
+  test("negative age (event timestamp ahead of the server clock) ⇒ a named clock-skew hole, never a fabricated '0s ago'", () => {
+    const html = renderCard(campaignModel(), { clock: { stale: false, ageMs: -5_000 } });
+    expect(html).toContain("fd-card-age fd-card-age-hole");
+    expect(html).toContain("clock skew");
+    expect(html).not.toContain("0s ago");
+    expect(html).toContain('title="event timestamp is ahead of the FlightDeck server clock"');
+  });
+
+  test("AX-5 guard: staleness never touches the status badge/text — 'active' stays 'active' whether stale or not", () => {
+    const fresh = renderCard(campaignModel(), { clock: { stale: false, ageMs: 5_000 } });
+    const stale = renderCard(campaignModel(), { clock: { stale: true, ageMs: 999_000 } });
+    const statusOf = (html: string) => html.match(/fd-badge-status[^>]*>([^<]+)</)?.[1];
+    expect(statusOf(fresh)).toBe(statusOf(stale));
+    expect(stale).toContain('data-status="active"'); // lifecycle status is untouched by staleness
+  });
+});
+
 describe("headless card (#31, AX-2)", () => {
   test("a headless activity shows 'no declared type', never '0 / ?' or a waves/legs count", () => {
     const m = model([
@@ -329,6 +374,11 @@ describe("card grid (default multi-activity view, R-12)", () => {
     expect(renderGrid([])).toContain("no activities");
   });
 
+  test("renderGrid with no opts emits no data-stale on any card (same as renderCard's no-clock case)", () => {
+    const html = renderGrid([campaignModel("x")]);
+    expect(html).not.toContain("data-stale");
+  });
+
   test("laneFor derives lane from folded status only", () => {
     expect(laneFor(campaignModel().view)).toBe("active");
     const closed = model([
@@ -336,5 +386,22 @@ describe("card grid (default multi-activity view, R-12)", () => {
       ev({ kind: "activity_end", activityId: "z", ts: "2026-07-07T10:30:00Z" }),
     ]);
     expect(laneFor(closed.view)).toBe("closed");
+  });
+
+  test("opts.clock fans out per-model, keyed by the SAME model the callback receives", () => {
+    const a = campaignModel("stale-one");
+    const b = campaignModel("fresh-two");
+    const html = renderGrid([a, b], {
+      clock: (m) => ({
+        stale: m.view.activityId === "stale-one",
+        ageMs: m.view.activityId === "stale-one" ? 900_000 : 3_000,
+      }),
+    });
+    // one card is marked stale, the other is not (each card carries the marker
+    // twice — the <article> itself and its age chip — hence 2 per card, not 1).
+    expect((html.match(/data-stale="true"/g) ?? []).length).toBe(2);
+    expect((html.match(/data-stale="false"/g) ?? []).length).toBe(2);
+    expect(html).toContain("15m ago");
+    expect(html).toContain("3s ago");
   });
 });

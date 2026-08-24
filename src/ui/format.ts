@@ -28,7 +28,14 @@ export function formatDuration(ms: number | null): string {
   if (mins < 60) return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
   const hours = Math.floor(mins / 60);
   const remMins = mins % 60;
-  return remMins > 0 ? `${hours}h ${remMins}m` : `${hours}h`;
+  if (hours < 24) return remMins > 0 ? `${hours}h ${remMins}m` : `${hours}h`;
+  // Every prior caller (ETA figures, blocked-on-you, metric spans) tops out well
+  // under a day; the card/row "time since last event" readout (cc-workflow#1146
+  // step 2) does not — a card idle for a week previously rendered "168h", correct
+  // but unreadable at the scale this column exists to convey.
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  return remHours > 0 ? `${days}d ${remHours}h` : `${days}d`;
 }
 
 /**

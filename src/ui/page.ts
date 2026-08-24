@@ -18,7 +18,7 @@ import { LOGO_DATA_URI, ORG_NAME } from "./brand.ts";
 import { BUILD_INFO } from "../version.ts";
 import { deriveMetrics } from "../metrics.ts";
 import type { Store } from "../store.ts";
-import { resolveStaleMs, stalenessPredicate } from "../watcher.ts";
+import { ageMs, resolveStaleMs, stalenessPredicate } from "../watcher.ts";
 import type { CardModel } from "./card.ts";
 import { buildConcernQueue, renderConcernQueue } from "./concern_queue.ts";
 import { DEFAULT_LAYOUT, type Lane, laneFor, renderGrid } from "./grid.ts";
@@ -53,8 +53,18 @@ export interface StalenessOpts {
  * One lane: heading + independent card/table toggle. BOTH representations are in the
  * DOM; CSS keyed on `data-layout` shows exactly one, so the toggle is pure client-side
  * (R-13). `data-layout` starts at the lane's default (Active → cards, Closed → table).
+ *
+ * `clock` is the SAME injected `(now, isStalled)` pair `renderBoard` used for lane
+ * ROUTING, threaded one layer further down so each card/row can report its own
+ * staleness (AX-5) — the lane heading says the SECTION is stale-as-a-group; this is
+ * the per-activity marker the axiom also requires ("look different at a glance",
+ * not only "sits in a different section").
  */
-function renderLane(lane: Lane, models: CardModel[]): string {
+function renderLane(
+  lane: Lane,
+  models: CardModel[],
+  clock: { now: number; isStalled: (v: ActivityView) => boolean },
+): string {
   if (models.length === 0) return "";
   // AX-2/AX-3 (#35): report how many of this lane's activities could not be
   // attributed to an agent. Without a tally the condition becomes invisible-normal
@@ -76,8 +86,12 @@ function renderLane(lane: Lane, models: CardModel[]): string {
       : "") +
     `<button class="fd-lane-toggle" data-action="toggle-layout" data-lane="${lane}">cards ⇄ table</button>` +
     `</div>` +
-    `<div class="fd-lane-cards">${renderGrid(models)}</div>` +
-    `<div class="fd-lane-table">${renderTable(models)}</div>` +
+    `<div class="fd-lane-cards">${renderGrid(models, {
+      clock: (m) => ({ stale: clock.isStalled(m.view), ageMs: ageMs(m.view, clock.now) }),
+    })}</div>` +
+    `<div class="fd-lane-table">${renderTable(models, {
+      clock: (m) => ({ stale: clock.isStalled(m.view), ageMs: ageMs(m.view, clock.now) }),
+    })}</div>` +
     `</section>`
   );
 }
@@ -116,7 +130,7 @@ export function renderBoard(store: Store, opts?: StalenessOpts): string {
     if (arr) arr.push(m);
     else byLane.set(lane, [m]);
   }
-  const lane = (l: Lane) => renderLane(l, byLane.get(l) ?? []);
+  const lane = (l: Lane) => renderLane(l, byLane.get(l) ?? [], { now, isStalled });
   // Board order (#10): presence, Active, THEN the concern queue, then Idle/Closed —
   // the queue sits between what is moving and what has stalled.
   return presence + lane("active") + concerns + lane("idle") + lane("closed");
@@ -155,6 +169,20 @@ main { padding: 16px; }
 .fd-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 8px; background: var(--panel); }
 .fd-card[data-status="active"] { border-color: #00e5ff44; box-shadow: 0 0 12px #00e5ff14; }
 .fd-card[data-status="blocked"] { border-color: #ff2d9566; box-shadow: 0 0 12px #ff2d9522; }
+/* Staleness (AX-5) is reported ON THE CARD, not just by which lane it lands in.
+   Rides outline — a property none of the data-status rules above touch — so it
+   genuinely layers rather than overwriting a blocked/active card's own border-color
+   (review finding: border-color/box-shadow both collide with the status rules
+   above and would silently erase the higher-priority "blocked on you" signal the
+   moment that same card also goes stale). */
+.fd-card[data-stale="true"] { outline: 2px solid var(--amber); outline-offset: 2px; }
+.fd-card-age { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.fd-card-age[data-stale="true"] { color: var(--amber); }
+/* AX-2: the age chip's own named holes (unparseable timestamp / clock skew) — same
+   de-emphasised-italic treatment as .fd-progress-headless. */
+.fd-card-age-hole, .fd-row-lastevent-hole { font-style: italic; color: var(--muted); }
+.fd-row[data-stale="true"] { background: #ffb20014; }
+.fd-row-lastevent[data-stale="true"] { color: var(--amber); }
 .fd-card-head { display: flex; align-items: center; gap: 8px; }
 .fd-card-title { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* AX-3 (#35): an id standing in for an agent name is NOT a name. De-emphasised,
@@ -371,7 +399,12 @@ const CLIENT_SCRIPT = `
       var live = base + (Date.now() - loadedAt);
       var secs = Math.floor(live / 1000);
       var mins = Math.floor(secs / 60);
-      var txt = mins < 1 ? secs + 's' : (mins < 60 ? mins + 'm' : Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm');
+      var hrs = Math.floor(mins / 60);
+      // Day tier mirrors format.ts's formatDuration (code review: a blocked-on-you
+      // card left open past 24h used to render the server's "1d 6h" on load, then
+      // silently rewrite to an hour-pile like "30h 12m" one second later — the exact
+      // unreadable shape the server-side day tier exists to avoid).
+      var txt = mins < 1 ? secs + 's' : (mins < 60 ? mins + 'm' : (hrs < 24 ? hrs + 'h ' + (mins % 60) + 'm' : Math.floor(hrs / 24) + 'd ' + (hrs % 24) + 'h'));
       els[i].textContent = '⏳ ' + txt;
     }
   }, 1000);
