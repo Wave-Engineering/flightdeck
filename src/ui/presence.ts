@@ -13,7 +13,8 @@
 
 import type { ActivityView } from "../fold.ts";
 import { isStalled } from "../watcher.ts";
-import { escapeHtml, formatDuration, resolveDisplay } from "./format.ts";
+import { renderAgeChip } from "./card.ts";
+import { escapeHtml, resolveDisplay } from "./format.ts";
 
 /** One roster row: an agent identity with its open sessions summarized. */
 export interface PresenceModel {
@@ -30,7 +31,11 @@ export interface PresenceModel {
   active: number;
   /** Open but stale sessions (no event within `staleMs`). */
   stale: number;
-  /** Milliseconds since the agent's most recent event, or null if unparseable. */
+  /** Milliseconds since the agent's most recent event, or null if unparseable.
+   *  May be NEGATIVE (clock skew between the emitting host and the FlightDeck
+   *  server, #51) — deliberately NOT clamped to 0 here, so the render layer
+   *  (`renderAgeChip`) can report it as a named hole instead of a fabricated
+   *  "0s ago", the same AX-2 contract the card/row age chip already uses. */
   lastSeenMs: number | null;
 }
 
@@ -99,7 +104,7 @@ export function buildPresence(
       hosts: [...g.hosts].sort(),
       active: g.active,
       stale: g.stale,
-      lastSeenMs: g.lastTs === null ? null : Math.max(0, opts.now - g.lastTs),
+      lastSeenMs: g.lastTs === null ? null : opts.now - g.lastTs,
     }))
     .sort((a, b) => a.agent.localeCompare(b.agent));
 }
@@ -112,6 +117,13 @@ export function buildPresence(
  *  the single visual cue that would reveal the substitution was removed precisely
  *  when it was needed. A real attributed agent's name never coincides with its
  *  host in practice, so this costs nothing in the normal case.
+ *
+ *  The "last seen" readout reuses the card/row's `renderAgeChip` (#51, AX-6: one
+ *  field, one meaning) instead of a bespoke `formatDuration`/ternary — a group with
+ *  no parseable timestamp now renders a named "age unknown" hole rather than
+ *  omitting the span, and a clock-skewed (negative) reading renders a named
+ *  "clock skew" hole rather than a fabricated "0s ago", same AX-2 contract the
+ *  card/row age chip already enforces.
  */
 function renderChip(m: PresenceModel): string {
   const sessions = m.active + m.stale;
@@ -125,9 +137,7 @@ function renderChip(m: PresenceModel): string {
     (m.hosts.length > 0
       ? `<span class="fd-presence-host">@ ${escapeHtml(m.hosts.join(", "))}</span>`
       : "") +
-    (m.lastSeenMs !== null
-      ? `<span class="fd-presence-last">${escapeHtml(formatDuration(m.lastSeenMs))} ago</span>`
-      : "") +
+    renderAgeChip({ stale: allStale, ageMs: m.lastSeenMs }, "span", "fd-presence-last") +
     `</span>`
   );
 }
