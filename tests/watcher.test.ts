@@ -165,4 +165,28 @@ describe("Idle lane wiring (renderBoard)", () => {
     expect(board).toContain('data-lane="closed"');
     expect(board).not.toContain('data-lane="idle"');
   });
+
+  test("cc-workflow#1146 step 2 / AX-5: the stalled card ITSELF carries data-stale + its age — not only the lane it's grouped under", () => {
+    const now = NOW + THRESHOLD * 3;
+    store.append(ev({ kind: "activity_start", activityId: "stale2", ts: T0, activityType: "campaign", label: "Stale", detail: { planTotal: 3 } }));
+    const board = renderBoard(store, { now, staleMs: THRESHOLD });
+    // Idle lane defaults to table layout, so this activity renders as a <tr>.
+    expect(board).toMatch(/<tr class="fd-row" data-activity-id="stale2"[^>]*data-stale="true"/);
+    // Anchor on the <tr> ITSELF, not the bare attribute — the same activityId also
+    // appears on the .fd-lane-cards <article> (both representations are always in
+    // the DOM; CSS picks which one shows), which renders FIRST in the board and has
+    // no closing </tr> of its own. A slice anchored on the bare attribute silently
+    // reads the card's markup instead of the row's, up through the table's <thead>
+    // </tr> — exactly the "test that passed because the code it claimed to exercise
+    // had already exited" shape FLIGHTDECK_AXIOMS.md warns about (code review catch).
+    const rowStart = board.indexOf('<tr class="fd-row" data-activity-id="stale2"');
+    const row = board.slice(rowStart, board.indexOf("</tr>", rowStart));
+    // Its status badge/text is UNCHANGED by staleness — status stays whatever fold()
+    // said (AX-5: staleness is reported, never interpreted into a status change).
+    expect(row).toContain(">active<");
+    // The row's own "last event" cell reports the real elapsed time (3× the
+    // threshold here — 45 minutes), not just a bare stale/not-stale flag.
+    expect(row).toContain('class="fd-row-lastevent"');
+    expect(row).toContain("45m");
+  });
 });

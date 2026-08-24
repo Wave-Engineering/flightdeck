@@ -54,6 +54,45 @@ describe("renderTable — one row per activity", () => {
   });
 });
 
+describe("staleness on the table row (cc-workflow#1146 step 2, FLIGHTDECK_AXIOMS AX-5)", () => {
+  test("no clock injected at all ⇒ no data-stale on the row, and an EMPTY last-event cell (not a fabricated '—')", () => {
+    const html = renderTable([activeModel("a"), activeModel("b")]);
+    expect(html).not.toContain("data-stale");
+    expect(html).toContain('<td class="fd-row-lastevent"></td>');
+  });
+
+  test("opts.clock marks the <tr> AND the last-event cell for the stale row only", () => {
+    const html = renderTable([activeModel("stale-x"), activeModel("fresh-y")], {
+      clock: (m) => ({
+        stale: m.view.activityId === "stale-x",
+        ageMs: m.view.activityId === "stale-x" ? 3_700_000 : 10_000,
+      }),
+    });
+    expect(html).toMatch(/<tr class="fd-row" data-activity-id="stale-x" data-status="active" data-stale="true"/);
+    expect(html).toMatch(/<tr class="fd-row" data-activity-id="fresh-y" data-status="active" data-stale="false"/);
+    expect(html).toContain("1h 1m"); // 3_700_000ms formatted
+    expect(html).toContain("10s");
+  });
+
+  test("clock injected but age unknowable (ageMs: null) ⇒ a NAMED hole in the last-event cell, never a fabricated dash (AX-2)", () => {
+    const html = renderTable([activeModel("a")], { clock: () => ({ stale: false, ageMs: null }) });
+    expect(html).toContain("fd-row-lastevent fd-row-lastevent-hole");
+    expect(html).toContain("age unknown");
+  });
+
+  test("negative age ⇒ a named clock-skew hole in the last-event cell, never a fabricated '0s'", () => {
+    const html = renderTable([activeModel("a")], { clock: () => ({ stale: false, ageMs: -1_000 }) });
+    const lastEventCell = html.match(/<td class="fd-row-lastevent[^>]*>([^<]*)</)?.[1];
+    expect(html).toContain("fd-row-lastevent fd-row-lastevent-hole");
+    expect(lastEventCell).toBe("clock skew");
+  });
+
+  test("the table header carries a 'last event' column", () => {
+    const html = renderTable([activeModel("a")]);
+    expect(html).toContain("<th>last event</th>");
+  });
+});
+
 describe("renderTable — headless row (#31, AX-2)", () => {
   test("a headless activity's progress cell reads 'no declared type', not '0 / ?'", () => {
     const events = [

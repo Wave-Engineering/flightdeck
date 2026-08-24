@@ -25,6 +25,46 @@ export interface CardModel {
 }
 
 /**
+ * The P4 watcher's wall-clock verdict for ONE activity (AX-5). Passed as a single
+ * object — never as two independent optional fields — so "no clock was injected at
+ * all" and "a clock was injected but this activity's age is unknowable" can't
+ * collapse into the same falsy value (review finding cc-workflow#1146 step 2: two
+ * genuinely different holes were both rendering as nothing, which is AX-2's named
+ * failure — "a display that cannot distinguish 'no data' from 'the data says zero'
+ * is displaying nothing, twice"). `opts.clock` ABSENT ⇒ no marker at all (caller has
+ * no clock). `opts.clock` PRESENT with `ageMs: null` ⇒ a named hole (clock present,
+ * timestamp unparseable). `ageMs` a number ⇒ the real reading, INCLUDING negative —
+ * negative is its own named hole (clock skew between the emitting host and the
+ * FlightDeck server), never silently clamped to "0s ago" the way `formatDuration`
+ * clamps for its other (duration, never age) callers.
+ */
+export interface ClockInfo {
+  stale: boolean;
+  ageMs: number | null;
+}
+
+/** Render the age readout + its own staleness marker from a `ClockInfo`, or "" when
+ *  no clock was injected at all. Shared by the card header and the table's "last
+ *  event" cell so the three holes (no clock / unknown timestamp / clock skew) read
+ *  identically in both representations (AX-6: one field, one meaning). */
+export function renderAgeChip(clock: ClockInfo | undefined, tag: "span" | "td", extraClass: string): string {
+  if (clock === undefined) return tag === "td" ? `<td class="${extraClass}"></td>` : "";
+  const cls = (hole: boolean) => `${extraClass}${hole ? ` ${extraClass}-hole` : ""}`;
+  const open = (hole: boolean, title: string) =>
+    `<${tag} class="${cls(hole)}" data-stale="${clock.stale}" title="${escapeHtml(title)}">`;
+  const close = `</${tag}>`;
+  if (clock.ageMs === null) {
+    return `${open(true, "no event on this activity carries a parseable timestamp")}age unknown${close}`;
+  }
+  if (clock.ageMs < 0) {
+    return `${open(true, "event timestamp is ahead of the FlightDeck server clock")}clock skew${close}`;
+  }
+  return `${open(false, "time since last event")}${escapeHtml(formatDuration(clock.ageMs))}${
+    tag === "span" ? " ago" : ""
+  }${close}`;
+}
+
+/**
  * The SINGLE campaign/float difference: the unit the estimator counts in. A campaign
  * burns down waves; a float burns down legs. Same anatomy, one different word.
  */
@@ -178,11 +218,22 @@ function renderMetricsGrid(m: CardModel): string {
 
 /**
  * Render one activity card. `opts.expanded` overrides the default (Active expanded,
- * Closed collapsed — R-14). The whole card is a pure function of `model`.
+ * Closed collapsed — R-14). `opts.clock` is the P4 watcher's wall-clock verdict
+ * (AX-5): staleness is REPORTED here, never inferred — it rides its own `data-stale`
+ * marker and age readout alongside `data-status`, and never replaces or recolors the
+ * status badge/text itself (that would be exactly the "inferring a status from
+ * silence" AX-1 forbids). ABSENT `opts.clock` (most existing tests, no clock to
+ * inject) renders no marker at all — see `ClockInfo`'s doc for why this is a
+ * three-way distinction, not a boolean default. The whole card is a pure function of
+ * `model` plus this one explicitly-injected value — no `Date.now()` here, same
+ * discipline as fold.ts/watcher.ts.
  */
-export function renderCard(model: CardModel, opts?: { expanded?: boolean }): string {
+export function renderCard(model: CardModel, opts?: { expanded?: boolean; clock?: ClockInfo }): string {
   const { view, eta } = model;
   const expanded = opts?.expanded ?? view.status !== "closed";
+  const clock = opts?.clock;
+  const staleAttr = clock === undefined ? "" : ` data-stale="${clock.stale}"`;
+  const ageChip = renderAgeChip(clock, "span", "fd-card-age");
   const concernChip =
     view.openConcerns > 0
       ? `<span class="fd-chip fd-chip-concern" title="open concerns">⚑ ${view.openConcerns}</span>`
@@ -203,8 +254,8 @@ export function renderCard(model: CardModel, opts?: { expanded?: boolean }): str
 
   return (
     `<article class="fd-card" data-activity-id="${escapeHtml(view.activityId)}" ` +
-    `data-type="${escapeHtml(view.activityType)}" data-status="${escapeHtml(view.status)}" ` +
-    `data-expanded="${expanded ? "true" : "false"}">` +
+    `data-type="${escapeHtml(view.activityType)}" data-status="${escapeHtml(view.status)}"` +
+    `${staleAttr} data-expanded="${expanded ? "true" : "false"}">` +
     // header
     `<header class="fd-card-head">` +
     `<span class="fd-card-title" data-attributed="${display.attributed}" title="${escapeHtml(
@@ -214,6 +265,7 @@ export function renderCard(model: CardModel, opts?: { expanded?: boolean }): str
     `<span class="fd-badge fd-badge-status" data-status="${escapeHtml(view.status)}">${escapeHtml(
       statusText,
     )}</span>` +
+    ageChip +
     `<button class="fd-card-toggle" data-action="toggle-expand" aria-label="expand or collapse">${
       expanded ? "▾" : "▸"
     }</button>` +
