@@ -108,22 +108,43 @@ across hosts. Session identifies; pid+host detects.
 **No identity fallback may collide.** A degraded identity must degrade to something
 *visibly* degraded, never to a value two different agents could share.
 
-> Current violation, in the kit rather than here —
-> `claudecode-workflow:scripts/flightdeck-session-emit.sh:44`:
+> **Resolved at source, not yet fleet-deployed** — both violations named below
+> were in the kit rather than here, in
+> `claudecode-workflow:scripts/flightdeck-session-emit.sh`, and both are fixed
+> on that repo's `main`. Neither fix is in effect until an agent reinstalls the
+> kit (merged ≠ shipped) — until then, this file's own compatibility reads
+> (`src/ui/presence.ts`, `tests/presence.test.ts`) keep exercising the
+> old-shape population on purpose; do not remove them on the strength of this
+> note alone. Kept as a worked example regardless: two DIFFERENT identity
+> fallbacks, in the same file, by the same hand, that each violated this axiom.
 >
-> ```bash
-> session="${FLIGHTDECK_SESSION_ID:-${CLAUDE_SESSION_ID:-$(basename "$PWD")}}"
-> ```
+> **The session fallback collided.** The old chain —
+> `session="${FLIGHTDECK_SESSION_ID:-${CLAUDE_SESSION_ID:-$(basename "$PWD")}}"`
+> — degraded two agents in one project to the SAME key (`basename "$PWD"`), so
+> the aoe/tmux double-start, precisely the error state a second key exists to
+> catch, was undetectable on the path where it was most likely: the two
+> sessions folded into one card and read as one busy agent. Fixed
+> (cc-workflow#1166) by widening the chain — below the hook's own stdin
+> `session_id`, the first and still-primary tier — to
+> `FLIGHTDECK_SESSION_ID → CLAUDE_CODE_SESSION_ID → tmux-${TMUX_PANE#%} →
+> basename "$PWD"` — each tier distinct per session before falling through to
+> the collision-prone last resort.
 >
-> Two agents in one project both degrade to `basename "$PWD"` — the **same key**.
-> So the aoe/tmux double-start, precisely the error state a second key exists to
-> catch, is undetectable on the path where it is most likely: the two sessions
-> fold into one card and read as one busy agent.
->
-> Ten lines later, `:54` of the same file degrades the *agent name* to the
-> hostname and documents it as *"a VISIBLE degradation on the deck … never a
-> silent failure."* That is the correct pattern. The session fallback is its
-> inverse, in the same file, by the same hand.
+> **The agent fallback violated both halves of this axiom's headline
+> sentence, not just the "visibly degraded" half.** The old line,
+> `agent="$host"`, was ONCE the correct pattern — the deck had no way to
+> render "no real identity" honestly, so faking the agent field to the
+> hostname was the only available *visible* degradation. But it never stopped
+> colliding either: every agent-less session on one host degraded to the SAME
+> key (the host), exactly the shape `tests/presence.test.ts`'s "two
+> agent-less sessions on the SAME host aggregate into one unattributed row"
+> case exists to catch. Once flightdeck#38 gave the deck a real, honest
+> degradation path (`attributed: false`, rendered distinctly, tallied), the
+> "visible" half became actively counterproductive too: a fabricated value
+> dressed as attribution, not a visibly-marked absence. Fixed
+> (cc-workflow#1151) by omitting `--agent` from the emit call entirely when no
+> Dev-Name resolves, letting the deck's own honest-absence rendering take
+> over.
 
 ---
 

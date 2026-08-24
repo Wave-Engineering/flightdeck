@@ -62,15 +62,20 @@ export function buildPresence(
     // own last resort (the session's activityId) covers "neither agent nor host".
     //
     // #38 code review, finding 1: the ONLY session emitter
-    // (claudecode-workflow scripts/flightdeck-session-emit.sh:56) does not leave
-    // `agent` null when no Dev-Name resolves — it sets `agent="$host"`, the
-    // documented (FLIGHTDECK_AXIOMS.md AX-4) pre-#38 degradation. On live data
-    // `v.agent` is therefore almost never null, and a resolver keyed only on
-    // "is agent null" would fire on essentially nothing. `agent === host` (both
-    // present, equal) is that emitter's own signature for "no real identity" — a
-    // documented contract read, not a guess (AX-1) — so it is treated exactly like
-    // a null agent here. A host-guarded length check (`v.host` may be `""`, #38
-    // finding 4) keeps an empty string from masquerading as a match.
+    // (claudecode-workflow scripts/flightdeck-session-emit.sh) did not leave
+    // `agent` null when no Dev-Name resolved — it set `agent="$host"`, the
+    // pre-#38 degradation. Fixed at source in cc-workflow#1151 (the emitter now
+    // OMITS --agent entirely instead), but merged is not shipped: every agent
+    // still running the pre-#1151 installed kit keeps emitting `agent === host`
+    // until it reinstalls (FLIGHTDECK_AXIOMS.md AX-4's "Resolved" callout notes
+    // the same gap). Do NOT remove this compatibility read until the kit rollout
+    // is confirmed complete — deleting it while the old shape is still live would
+    // regress every un-reinstalled session straight back to a fabricated identity.
+    // `agent === host` (both present, equal) remains that emitter's own signature
+    // for "no real identity" among the population still emitting it — a documented
+    // contract read, not a guess (AX-1) — so it is treated exactly like a null
+    // agent here. A host-guarded length check (`v.host` may be `""`, #38 finding 4)
+    // keeps an empty string from masquerading as a match.
     const emitterDegraded = v.agent !== null && v.host !== null && v.host.length > 0 && v.agent === v.host;
     const label = v.host && v.host.length > 0 ? v.host : null;
     const display = resolveDisplay({
