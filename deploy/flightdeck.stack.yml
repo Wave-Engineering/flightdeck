@@ -28,6 +28,12 @@ services:
       # Staleness watcher cadence + threshold (optional; shown with their defaults).
       FLIGHTDECK_WATCH_INTERVAL_MS: "${FLIGHTDECK_WATCH_INTERVAL_MS:-60000}"
       FLIGHTDECK_STALE_MS: "${FLIGHTDECK_STALE_MS:-900000}"
+      # Fold-since watermark (optional, flightdeck#25) — INERT (blank) by default,
+      # same pattern as the Discord channel below. Set FLIGHTDECK_FOLD_SINCE in the
+      # deploying shell to an ISO-8601 timestamp to exclude everything before it
+      # from the rendered view; the log itself is never touched. See "Repairing
+      # accumulated bad state" in deploy/README.md before setting this.
+      FLIGHTDECK_FOLD_SINCE: "${FLIGHTDECK_FOLD_SINCE:-}"
       # Discord push (P4) is INERT unless BOTH channel + token resolve. SEAM: set
       # the channel here (and create the discord token secret below) to enable
       # phone alerts. Left blank => no transport => no push.

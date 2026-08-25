@@ -24,6 +24,29 @@ export interface StoreOptions {
   log: EventLog;
   /** SQLite path for the materialized view. Defaults to in-memory (rebuilt on boot). */
   dbPath?: string;
+  /**
+   * ISO-8601 watermark (flightdeck#25). Events with `ts` strictly before this are
+   * excluded from the materialized view — never from the log, which stays the
+   * complete, untouched source of truth. Closes the "emit-side fixes are not
+   * retroactive" gap: every FlightDeck UI fix to date has corrected events going
+   * FORWARD, so a pre-fix event (wrong activityId, missing agent, wrong scope —
+   * whatever the bug of the day was) sits in the log forever and re-folds into a
+   * broken card on every boot, with no way to distinguish "old and wrong" from
+   * "new and correct" from inside the view itself. A watermark is a bounded,
+   * reversible answer: raise it past a known-bad period's events and they stop
+   * rendering; the log is untouched, so lowering it (or removing the var) brings
+   * them back exactly as they were. ISO-8601 UTC timestamps compare correctly as
+   * plain strings, so no date parsing is needed here — validated at the caller
+   * (server.ts) as UTC `Z`-suffixed with required seconds and OPTIONAL
+   * fractional seconds (the real emitter never emits fractions —
+   * "2026-01-01T00:00:00Z" — but a `.000Z`-style watermark, e.g. from
+   * `Date.toISOString()`, compares safely against it either way); an offset
+   * form is rejected, since a plain string compare is only correct when both
+   * sides share the same UTC `Z` shape.
+   * NOT safe to raise past a still-live activity's `activity_start` — see
+   * deploy/README.md's caution before setting this on a running deploy.
+   */
+  foldSince?: string;
 }
 
 const CREATE_TABLE = `
@@ -103,10 +126,12 @@ export class Store implements IngestSink {
   readonly log: EventLog;
   private readonly db: Database;
   private readonly upsertStmt: Statement;
+  private readonly foldSince: string | null;
   private events: FlightDeckEvent[] = [];
 
   constructor(opts: StoreOptions) {
     this.log = opts.log;
+    this.foldSince = opts.foldSince ?? null;
     // Open defensively: a lost/empty OR SQLite-corrupt view file is discarded and
     // recreated here, so the rebuild below always folds into a sound, empty db.
     this.db = openViewDb(opts.dbPath ?? ":memory:");
@@ -117,19 +142,35 @@ export class Store implements IngestSink {
     this.rebuild();
   }
 
-  /** Persist an event (log first), then update just its activity's view row. */
+  /** True when a fold-since watermark would exclude *event* from the view. */
+  private beforeWatermark(event: FlightDeckEvent): boolean {
+    return this.foldSince !== null && event.ts < this.foldSince;
+  }
+
+  /**
+   * Persist an event (log first — ALWAYS, watermark or not, since the log is the
+   * complete source of truth per flightdeck#25), then fold it into the view only
+   * if it's not older than the watermark. A live append is always "now", so this
+   * branch is defense-in-depth (backdated/replayed events, clock skew) rather
+   * than the primary use case — the watermark's real job is bounding `rebuild()`.
+   */
   append(event: FlightDeckEvent): void {
-    this.log.append(event); // source of truth first
+    this.log.append(event); // source of truth first, unconditionally
+    if (this.beforeWatermark(event)) return;
     this.events.push(event);
     this.upsertActivity(event.activityId);
   }
 
   /**
-   * Drop the materialized view and re-fold the WHOLE log from scratch. Re-reads
-   * the log (source of truth), so this proves the view is a pure projection.
+   * Drop the materialized view and re-fold the log from scratch, EXCLUDING
+   * anything before the fold-since watermark (flightdeck#25) — the log itself is
+   * still read in full (`readAll()`); only the in-memory/materialized PROJECTION
+   * is bounded. Re-reads the log (source of truth) either way, so this proves the
+   * view is a pure projection.
    */
   rebuild(): void {
-    this.events = this.log.readAll();
+    const all = this.log.readAll();
+    this.events = this.foldSince === null ? all : all.filter((e) => !this.beforeWatermark(e));
     this.db.run("DELETE FROM activity_view");
     this.rebuildFromEvents();
   }
@@ -150,7 +191,13 @@ export class Store implements IngestSink {
     return row ? (JSON.parse(row.view_json) as ActivityView) : null;
   }
 
-  /** The raw event log (source of truth), in order — for metrics/ETA derivation. */
+  /**
+   * The in-memory event set backing the view, in order — for metrics/ETA
+   * derivation and the /log transcript viewer. NOT the raw log: under a
+   * fold-since watermark (flightdeck#25) this is the same bounded projection
+   * `getView()` folds from, not the complete on-disk history. The untouched
+   * complete log is `this.log.readAll()`.
+   */
   allEvents(): FlightDeckEvent[] {
     return this.events.slice();
   }

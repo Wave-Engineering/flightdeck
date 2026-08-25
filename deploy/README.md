@@ -227,11 +227,60 @@ must not silently overwrite it with an already-truncated log. Keep the
 contained, and is the regression corpus for validating a fix aimed at
 whatever caused them.
 
-**No retention/cutoff policy exists yet.** A wipe is a one-time reset, not a
-standing remedy — unbounded append with a full re-fold on every boot is also
-an unbounded startup cost, and the log will accumulate again. This is a real
-open design decision (a TTL? an event cap? an operator-triggered prune
-route?), not yet made; tracked on flightdeck#25.
+**Retention/cutoff policy: `FLIGHTDECK_FOLD_SINCE` (flightdeck#25).** A wipe is a
+one-time, destructive reset. For the common case — a known-bad period of
+events (a fixed emit-side bug's pre-fix history, a fragmented campaign) —
+set `FLIGHTDECK_FOLD_SINCE` to an ISO-8601 UTC timestamp instead — the shape
+the real emitter produces, e.g. `2026-01-01T00:00:00Z` (fractional seconds
+are also accepted, e.g. `.000Z`, but any other form — an offset, a bare
+date — is refused; the server validates and refuses to start on those):
+
+```sh
+export FLIGHTDECK_FOLD_SINCE=2026-01-01T00:00:00Z
+IMAGE_TAG=$IMAGE_TAG docker stack deploy -c deploy/flightdeck.stack.yml flightdeck
+```
+
+(The stack file already wires this var — `deploy/flightdeck.stack.yml`'s
+`environment:` block — so exporting it before `docker stack deploy` is all
+that's needed; do not add a second `environment:` key to the stack file
+itself, which is map-form there, not the list-form shown by some Compose
+examples.)
+
+Events with `ts` strictly before the watermark are excluded from the
+rendered view on every boot and every live append. **The log is never
+touched** — this is the opposite of a wipe: fully reversible (raise the
+watermark to hide more, lower it or unset the var to bring events back,
+restart either way — no backup, no volume surgery, no lost history), and it
+does not grow the startup-cost problem the way an ever-larger unbounded log
+does (a raised watermark means `rebuild()` folds fewer events, not more).
+Every rendered surface is bounded the same way, not just the cards — the
+`/log` transcript viewer reads the same filtered event set, so it will not
+show pre-watermark events either. The on-disk `events.jsonl` alone retains
+everything.
+
+**Like a wipe, this is NOT safe to change with a campaign in flight** —
+reversible does not mean safe at any time. A watermark that lands after a
+live activity's `activity_start` excludes that
+activity's own head event — the card doesn't disappear, it degrades in
+place: it falls back to "headless" classification, loses its label and
+totals, and its progress counters recompute from whatever events survive
+(which can go *backward*). That is the exact "renders starved" symptom the
+wipe warning above exists to prevent, by a different mechanism. Same rule
+as the wipe: check for a currently-reproducing cause first (a wipe or a
+watermark bump both throw away the evidence a real bug needs), and choose
+a watermark that predates the `activity_start` of every activity you still
+want rendered whole.
+
+Use the **wipe** above only when you need to discard events permanently
+(e.g. genuinely wrong data, not just old-and-superseded); use
+**`FLIGHTDECK_FOLD_SINCE`** for "stop rendering everything before this
+point" without losing the history. They compose: a wipe still needs no
+campaign in flight, and so does a `FLIGHTDECK_FOLD_SINCE` change unless
+you've confirmed it predates every activity still in flight.
+
+Startup cost (unbounded log growth over the log's full lifetime, independent
+of any watermark) remains open — not addressed here, still a real design
+question if the log itself grows large enough for a full re-fold to matter.
 
 ---
 
@@ -248,6 +297,7 @@ these are resolved.
 | **Discord push** (optional) | `FLIGHTDECK_DISCORD_CHANNEL` env + `flightdeck_discord_token` secret | Set BOTH to enable phone alerts; leave blank to keep push inert. |
 | **Volume durability** (multi-node) | `volumes.flightdeck_data.driver` | `local` pins state to one node. For multi-node, use a networked/backed driver **or** constrain the service to the volume's node so state isn't lost on reschedule. |
 | **Watcher thresholds** (optional) | `FLIGHTDECK_WATCH_INTERVAL_MS`, `FLIGHTDECK_STALE_MS` | Defaults 60s / 15m. Override in the stack env if you want different staleness sensitivity. |
+| **Fold-since watermark** (optional) | `FLIGHTDECK_FOLD_SINCE` | Unset by default (nothing excluded). Set to an ISO-8601 timestamp to hide pre-fix garbage from the view without touching the log — see "Repairing accumulated bad state" above. |
 
 ## Notes
 
