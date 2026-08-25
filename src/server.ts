@@ -196,9 +196,41 @@ if (import.meta.main) {
   const logPath = process.env["FLIGHTDECK_LOG_PATH"] ?? "data/events.jsonl";
   const dbPath = process.env["FLIGHTDECK_DB_PATH"] ?? "data/flightdeck.db";
   const port = Number(process.env["PORT"] ?? "8080");
+  // flightdeck#25: optional ISO-8601 (UTC, Z-suffixed) watermark excluding pre-fix
+  // garbage from the rendered view without touching the log. Unset by default —
+  // inert until an operator sets it. See deploy/README.md for the retention/cutoff
+  // policy. Validated and fail-closed (code review), matching this file's existing
+  // precedent for FLIGHTDECK_INGEST_TOKEN (:190-195) and FLIGHTDECK_WATCH_INTERVAL_MS
+  // (:220-221): the comparison in store.ts is a PLAIN STRING compare, which is only
+  // correct because every real event ts is exactly this shape (wave_status's
+  // now_iso() — cc-workflow src/wave_status/events/__init__.py — emits
+  // "%Y-%m-%dT%H:%M:%SZ", never an offset or fractional seconds). An unvalidated
+  // typo fails in two silent, opposite directions: "yesterday" sorts AFTER every
+  // real "2..." timestamp and excludes EVERYTHING (blank board, no error); a
+  // non-ISO date like "08/01/2026" sorts BEFORE every real timestamp and excludes
+  // NOTHING (operator restarts, sees no change, concludes the feature is broken).
+  // An offset form (+00:00 instead of Z) would silently misplace the boundary by
+  // the offset amount — the regex closes that at the only place it can enter the
+  // system, since no emitter produces one.
+  const rawFoldSince = process.env["FLIGHTDECK_FOLD_SINCE"] || undefined;
+  const ISO_UTC_Z = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+  // The regex alone is shape-valid, not calendar-valid — it would accept
+  // "2026-13-45T99:99:99Z". Date.parse rejects month 13 / day 32 / hour 25
+  // outright, closing a narrower instance of the same silent-failure class
+  // above (a day/month transposition, e.g. 2026-31-01 for Jan 31, would sort
+  // lexically after every real 2026 timestamp and blank the board for the
+  // whole year with no error).
+  if (rawFoldSince && (!ISO_UTC_Z.test(rawFoldSince) || Number.isNaN(Date.parse(rawFoldSince)))) {
+    console.error(
+      `[flightdeck] FATAL: FLIGHTDECK_FOLD_SINCE=${rawFoldSince} is not ISO-8601 UTC ` +
+        `(expected e.g. 2026-01-01T00:00:00Z). Refusing to start.`,
+    );
+    process.exit(1);
+  }
+  const foldSince = rawFoldSince;
   // Store = append-only log (source of truth) + SQLite materialized view; the view
   // is rebuilt from the log on boot, so a lost/corrupt db self-heals (R-09).
-  const sink = new Store({ log: new EventLog(logPath), dbPath });
+  const sink = new Store({ log: new EventLog(logPath), dbPath, foldSince });
   // UI hub renders the console from the store and live-pushes over SSE (R-11).
   const ui = new UiHub(sink);
   // P4 staleness watcher + Discord push (S4.1/S4.2). Inert-by-default: no alert goes
@@ -219,6 +251,7 @@ if (import.meta.main) {
   watchTimer.unref?.();
   console.error(
     `[flightdeck] listening on http://${server.hostname}:${server.port} (log: ${logPath}, view: ${dbPath})` +
-      ` — staleness push ${notifier.active ? "ENABLED" : "inert (Discord not configured)"}`,
+      ` — staleness push ${notifier.active ? "ENABLED" : "inert (Discord not configured)"}` +
+      ` — fold-since: ${foldSince ?? "unset"}`,
   );
 }
