@@ -405,3 +405,22 @@ describe("card grid (default multi-activity view, R-12)", () => {
     expect(html).toContain("3s ago");
   });
 });
+
+describe("activityType conflict marker (fd#41)", () => {
+  test("no marker on an ordinary card", () => {
+    const html = renderCard(campaignModel());
+    expect(html).not.toContain("fd-chip-type-conflict");
+  });
+
+  test("visible marker when two different declared types land on one activityId", () => {
+    const conflicted = model([
+      ev({ kind: "step", activityId: "conflict1", ts: "t0", activityType: "campaign", label: "promoted", wave: "1" }),
+      ev({ kind: "step", activityId: "conflict1", ts: "t1", activityType: "float", label: "leg", detail: { leg: 1 } }),
+    ]);
+    expect(conflicted.view.activityTypeConflict).toBe(true);
+    const html = renderCard(conflicted);
+    expect(html).toContain("fd-chip-type-conflict");
+    // AX-2's "name the kind of hole" — a title, not just a bare marker.
+    expect(html).toContain("activityType changed mid-stream");
+  });
+});

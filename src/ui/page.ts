@@ -223,6 +223,11 @@ main { padding: 16px; }
 .fd-eta-blocked { color: var(--magenta); }
 .fd-chip { font-size: 11px; padding: 1px 7px; border-radius: 999px; }
 .fd-chip-concern { color: var(--red); border: 1px solid var(--red); text-shadow: 0 0 6px #ff386055; }
+/* fd#41: amber, matching every other data-quality marker (.fd-unattributed,
+   .fd-headless-count) — distinct from the red concern chip, since this is a
+   fold-detected anomaly, not an agent-raised concern. */
+.fd-chip-type-conflict { color: var(--amber); border: 1px solid var(--amber); text-shadow: 0 0 6px #ffb20055; }
+.fd-row-typeconflict { color: var(--amber); }
 .fd-metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
 .fd-card[data-expanded="false"] .fd-metrics-grid,
 .fd-card[data-expanded="false"] .fd-eta-strip { display: none; }

@@ -201,6 +201,62 @@ describe("foldActivity — headless activities are not phantom campaigns (#31, A
     expect(floatHeadless.activityType).toBe("float");
   });
 
+  test("first classification is not a conflict (fd#41)", () => {
+    // Headless -> campaign is the NORMAL first-classification path (#31), not a
+    // conflict — activityTypeConflict must stay false here, or every ordinary
+    // activity would flag as anomalous.
+    const v = foldActivity([
+      { kind: "step", activityId: "c", ts: "t0", activityType: "campaign", label: "promoted", wave: "1" },
+    ] as FlightDeckEvent[]);
+    expect(v.activityType).toBe("campaign");
+    expect(v.activityTypeConflict).toBe(false);
+  });
+
+  test("session overriding a campaign default is not a conflict (fd#41)", () => {
+    // The session override (AC6) is a categorical distinction (presence vs
+    // work), not two work-activity types disagreeing — must not flag.
+    const v = foldActivity([
+      { kind: "step", activityId: "s", ts: "t0", activityType: "campaign", label: "promoted", wave: "1" },
+      { kind: "step", activityId: "s", ts: "t1", activityType: "session" },
+    ] as FlightDeckEvent[]);
+    expect(v.activityType).toBe("session");
+    expect(v.activityTypeConflict).toBe(false);
+  });
+
+  test("TWO DIFFERENT declared types on one activityId is a real conflict — last write wins, flagged (fd#41)", () => {
+    // The decided resolution (BJ): last-write-wins, with a visible marker so
+    // the operator can see the estimator unit silently flipped, rather than
+    // the pre-fix silent last-write-wins this issue was filed against.
+    const v = foldActivity([
+      { kind: "step", activityId: "x", ts: "t0", activityType: "campaign", label: "promoted", wave: "1" },
+      { kind: "step", activityId: "x", ts: "t1", activityType: "float", label: "leg", detail: { leg: 1 } },
+    ] as FlightDeckEvent[]);
+    expect(v.activityType).toBe("float"); // last write wins
+    expect(v.activityTypeConflict).toBe(true); // but it's flagged
+
+    // And the reverse order — float first, then campaign — flags the same way,
+    // proving this isn't accidentally directional (e.g. only firing float->campaign).
+    const reversed = foldActivity([
+      { kind: "step", activityId: "y", ts: "t0", activityType: "float", label: "leg", detail: { leg: 1 } },
+      { kind: "step", activityId: "y", ts: "t1", activityType: "campaign", label: "promoted", wave: "1" },
+    ] as FlightDeckEvent[]);
+    expect(reversed.activityType).toBe("campaign");
+    expect(reversed.activityTypeConflict).toBe(true);
+  });
+
+  test("repeating the SAME declared type is not a conflict (fd#41)", () => {
+    // Multiple campaign events (the normal case — every wavemachine step
+    // re-declares it) must not falsely flag just because the check runs on
+    // every event.
+    const v = foldActivity([
+      { kind: "activity_start", activityId: "c", ts: "t0", activityType: "campaign" },
+      { kind: "step", activityId: "c", ts: "t1", activityType: "campaign", label: "promoted", wave: "1" },
+      { kind: "step", activityId: "c", ts: "t2", activityType: "campaign", label: "promoted", wave: "2" },
+    ] as FlightDeckEvent[]);
+    expect(v.activityType).toBe("campaign");
+    expect(v.activityTypeConflict).toBe(false);
+  });
+
   test("a real activity_start still classifies as before (no regression)", () => {
     expect(foldActivity(campaign).activityType).toBe("campaign");
   });

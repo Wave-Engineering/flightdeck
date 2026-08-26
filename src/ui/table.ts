@@ -48,7 +48,15 @@ function row(m: CardModel, clock: ClockInfo | undefined): string {
     `<td class="fd-row-title" data-attributed="${display.attributed}" title="${escapeHtml(
       fullName,
     )}">${escapeHtml(display.text)}</td>` +
-    `<td>${escapeHtml(view.activityType)}</td>` +
+    // fd#41: the card's fd-chip-type-conflict marker has no table analog by
+    // default — but idle/closed are the DEFAULT layout (grid.ts), so a
+    // conflicted activity that goes stale or closes would show its
+    // last-write-wins type here with zero indication it was ever contested.
+    `<td>${escapeHtml(view.activityType)}${
+      view.activityTypeConflict
+        ? ` <span class="fd-row-typeconflict" title="activityType changed mid-stream — showing the most recent declaration">⚠</span>`
+        : ""
+    }</td>` +
     `<td>${escapeHtml(STATUS_TEXT[view.status])}</td>` +
     `<td class="fd-row-progress">${progressCell(view)}</td>` +
     `<td class="fd-row-machine">${escapeHtml(formatDuration(eta.machineTimeRemainingMs))}</td>` +
