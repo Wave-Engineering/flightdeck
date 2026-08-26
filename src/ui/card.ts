@@ -238,6 +238,12 @@ export function renderCard(model: CardModel, opts?: { expanded?: boolean; clock?
     view.openConcerns > 0
       ? `<span class="fd-chip fd-chip-concern" title="open concerns">⚑ ${view.openConcerns}</span>`
       : "";
+  // fd#41: a data-quality anomaly (two conflicting declared types on one
+  // activityId), not an agent-raised concern — a distinct marker from
+  // concernChip above, same "visible, titled" idiom (AX-2/AX-4).
+  const typeConflictChip = view.activityTypeConflict
+    ? `<span class="fd-chip fd-chip-type-conflict" title="activityType changed mid-stream — showing the most recent declaration">⚠ type</span>`
+    : "";
   // Title precedence (#10): the working agent's Dev-Name when the activity has
   // one, else the SHORT project name (basename — never the full forge path).
   // The untouched full value stays on the hover title either way.
@@ -275,6 +281,7 @@ export function renderCard(model: CardModel, opts?: { expanded?: boolean; clock?
     renderProgress(view) +
     renderEtaStrip(eta, { variant: "inline" }) +
     concernChip +
+    typeConflictChip +
     `</div>` +
     // expanded body: the split-ETA headline strip + the full metrics grid. Always in
     // the DOM; CSS reveals it only when expanded, so expand/collapse is pure

@@ -54,6 +54,30 @@ describe("renderTable — one row per activity", () => {
   });
 });
 
+describe("activityType conflict marker on the table row (fd#41)", () => {
+  // Idle/closed are the DEFAULT layout (grid.ts) — the exact moment an
+  // operator scans back over a stale/closed activity to reconstruct what
+  // happened, this is what they actually see, not the card.
+  test("no marker on an ordinary row", () => {
+    const html = renderTable([activeModel("ordinary")]);
+    expect(html).not.toContain("fd-row-typeconflict");
+  });
+
+  test("visible marker when two different declared types land on one activityId", () => {
+    const events = [
+      ev({ kind: "step", activityId: "conflict1", ts: "t0", activityType: "campaign", label: "promoted", wave: "1" }),
+      ev({ kind: "step", activityId: "conflict1", ts: "t1", activityType: "float", label: "leg", detail: { leg: 1 } }),
+    ];
+    const view = foldActivity(events);
+    expect(view.activityTypeConflict).toBe(true);
+    const metrics = deriveMetrics(events);
+    const model: CardModel = { view, metrics, eta: computeEta(view, metrics) };
+    const html = renderTable([model]);
+    expect(html).toContain("fd-row-typeconflict");
+    expect(html).toContain("activityType changed mid-stream");
+  });
+});
+
 describe("staleness on the table row (cc-workflow#1146 step 2, FLIGHTDECK_AXIOMS AX-5)", () => {
   test("no clock injected at all ⇒ no data-stale on the row, and an EMPTY last-event cell (not a fabricated '—')", () => {
     const html = renderTable([activeModel("a"), activeModel("b")]);

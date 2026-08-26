@@ -66,6 +66,18 @@ export interface Concern {
 export interface ActivityView {
   activityId: string;
   activityType: ActivityType;
+  /** True iff this activity ever received TWO DIFFERING declared types
+   *  ("campaign" vs "float") across its event stream (fd#41). Resolution is
+   *  last-write-wins — `activityType` above always reflects the MOST RECENT
+   *  declaration — but a genuine conflict is a data-quality anomaly the
+   *  operator must be able to SEE, not a routine reclassification (a
+   *  headless stream declaring its type for the first time is not a
+   *  conflict; nor is a session marker overriding a campaign default).
+   *  Not reachable from any current emitter as of fd#41 — only "campaign" is
+   *  ever stamped today, always by the wavemachine driver on its own pinned
+   *  activityId — kept as defensive hardening for whenever a second
+   *  producer (e.g. a future lazyriver "float" emitter) exists. */
+  activityTypeConflict: boolean;
   label: string | null;
   status: ActivityStatus;
   startedAt: string | null;
@@ -194,6 +206,7 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
     // Corrected below the moment any event declares a real type — same head-optional
     // pattern as the session check just under it.
     activityType: "headless",
+    activityTypeConflict: false,
     label: null,
     status: "active",
     startedAt: null,
@@ -281,7 +294,23 @@ export function foldActivity(events: FlightDeckEvent[]): ActivityView {
     // work events, no lifecycle head) fall through to the "campaign" default rather
     // than to whatever type its events actually declare. Last-write-wins, same as the
     // other scope-tag latches in this loop.
+    //
+    // fd#41: last-write-wins is the DECIDED resolution when two DIFFERENT
+    // declared types land on one activityId — not the silent version this
+    // originally was. `v.activityType` already being "campaign" or "float"
+    // (not "headless") means a PRIOR event already classified this activity;
+    // a later event declaring the OTHER type is a genuine conflict, not the
+    // normal first-classification case, so it's flagged before still being
+    // applied. Not reachable from any current emitter (see the field's own
+    // doc) — defensive hardening, matching AX-4's "surface the collision,
+    // don't fold it silently" posture for the analogous identity case.
     if (e.activityType === "campaign" || e.activityType === "float") {
+      if (
+        (v.activityType === "campaign" || v.activityType === "float") &&
+        v.activityType !== e.activityType
+      ) {
+        v.activityTypeConflict = true;
+      }
       v.activityType = e.activityType;
     }
 
