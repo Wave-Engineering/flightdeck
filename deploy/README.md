@@ -11,7 +11,7 @@ Deliverables in this repo:
 | --- | --- |
 | `Dockerfile` | Builds the non-root Bun image; state on a `/data` volume. |
 | `docker-entrypoint.sh` | Bridges Swarm secret **files** → the env the server reads (`*_FILE` convention). |
-| `.github/workflows/release.yml` | On a `v*` tag / release, builds + pushes `ghcr.io/wave-engineering/flightdeck`. |
+| `.github/workflows/release.yml` | On a `v*` tag push, builds + pushes `ghcr.io/wave-engineering/flightdeck`. |
 | `deploy/flightdeck.stack.yml` | The Swarm stack (this file's sibling). |
 | `config/flightdeck.env.example` | Every env knob, documented, with placeholders. |
 

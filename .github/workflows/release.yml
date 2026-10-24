@@ -112,8 +112,8 @@ jobs:
   # (a cosign or Hub flake) is recovered with "Re-run failed jobs": that re-runs this job
   # alone on publish's stored digest, the version tag already on it is skipped, and nothing
   # is rebuilt. Re-running publish would rebuild a new digest (a rebuild never reproduces
-  # one) and move GHCR's version tag, which Hub then refuses. So never "Re-run all jobs"
-  # once this job has pushed.
+  # one) and move GHCR's version tag, which Hub then refuses. So once this job has pushed,
+  # never re-run publish: not by "Re-run all jobs", and not by re-running publish alone.
   mirror:
     needs: publish
     runs-on: ubuntu-latest
