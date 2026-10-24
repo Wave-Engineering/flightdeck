@@ -42,6 +42,9 @@ jobs:
       contents: read
       packages: write
       id-token: write # keyless cosign (Fulcio/Rekor) via the shared oaw-sign-image action
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      release_refs: ${{ steps.mirror.outputs.release-refs }}
     steps:
       - uses: actions/checkout@v4
 
@@ -111,14 +114,17 @@ jobs:
           username: oakandwave
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Mirror GHCR tags to Docker Hub oakandwave
-        # Registry migration (#18/#20): copy the just-pushed GHCR tags to docker.io/oakandwave.
-        # imagetools copies cross-registry using each registry's own creds (ghcr via the
-        # GHCR login, docker.io via the OAT) and rebuilds nothing.
-        env:
-          TAGS: ${{ steps.meta.outputs.tags }}
-        run: |
-          while IFS= read -r r; do [ -n "$r" ] && docker buildx imagetools create --tag "docker.io/oakandwave/flightdeck:${r##*:}" "$r"; done <<< "$TAGS"
+      - name: Mirror the GHCR digest to Docker Hub oakandwave
+        # Shared oaw-mirror-image action (claudecode-workflow#1326): copies the exact digest
+        # under every tag (ghcr via the GHCR login, docker.io via the OAT), but pushes a version
+        # tag (X.Y.Z) only when it is absent, and fails with nothing pushed if one already names
+        # another digest. Rebuilds nothing.
+        id: mirror
+        uses: wave-engineering/claudecode-workflow/.github/actions/oaw-mirror-image@d82d57ba3553ea5f82d3267f7c1e98d944a07a3a
+        with:
+          source-digest-ref: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          tags: ${{ steps.meta.outputs.tags }}
+          dest-image: docker.io/oakandwave/flightdeck
 
       - name: Sign the Docker Hub image (cosign keyless + SBOM)
         # The mirror copies the content-identical manifest, so the Docker Hub digest equals the
@@ -142,3 +148,23 @@ jobs:
           image: docker.io/oakandwave/flightdeck:${{ steps.meta.outputs.version }}
           only-severities: critical,high
           write-comment: false
+
+  # Write the image's digest-pinned refs into the GitHub release. Its own job, after the
+  # mirror and both signatures, so a release-API failure can't stop a signature, and
+  # contents: write sits on a job that runs no registry or signing tooling.
+  release-notes:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Write the image digest into the release
+        # A tag push with no release creates one (generated notes); a release published by
+        # hand gets the Images block appended, or replaced on a rerun. A release this job
+        # creates with GITHUB_TOKEN triggers no workflow, so it can't loop back here.
+        uses: wave-engineering/claudecode-workflow/.github/actions/oaw-release-images@d82d57ba3553ea5f82d3267f7c1e98d944a07a3a
+        with:
+          release-tag: ${{ github.ref_name }}
+          release-refs: ${{ needs.publish.outputs.release_refs }}
+          source-digest-ref: ${{ env.IMAGE }}@${{ needs.publish.outputs.digest }}
+          create-if-missing: "true"
