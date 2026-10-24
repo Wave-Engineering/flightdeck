@@ -39,7 +39,7 @@ deliverables, it never deploys. The Phase 5 (Wave 5.2) artifacts:
 
 - `Dockerfile` + `docker-entrypoint.sh` — non-root Bun image; event log + SQLite
   view on a persistent `/data` volume. Build only: `docker build .`.
-- `.github/workflows/release.yml` — on a `v*` tag / release, builds + pushes
+- `.github/workflows/release.yml` — on a `v*` tag push, builds + pushes
   `ghcr.io/wave-engineering/flightdeck` to GHCR (defined, not triggered).
 - `deploy/flightdeck.stack.yml` + `config/flightdeck.env.example` + `deploy/README.md`
   — the Swarm stack, the documented env knobs, and the operator runbook (with a

@@ -2,12 +2,13 @@ name: Release
 
 # Build the FlightDeck image and publish it to GHCR so the operator can pull it
 # (S5.4 / #878). DEFINED, not triggered — a release happens only when a human
-# pushes a v* tag or publishes a GitHub Release. No deploy is performed here.
+# pushes a v* tag (publishing a GitHub Release with a new tag pushes one). No deploy
+# is performed here. There is no `release: published` trigger (#60): release-notes
+# creates the release itself, and a second run for the same tag would rebuild a new
+# digest that Docker Hub's immutable version tag refuses.
 on:
   push:
     tags: ["v*"]
-  release:
-    types: [published]
 
 # Least-privilege default: read-only, inherited by the test job (which never pushes).
 # The publish job grants itself packages:write to push to ghcr.io.
@@ -42,6 +43,10 @@ jobs:
       contents: read
       packages: write
       id-token: write # keyless cosign (Fulcio/Rekor) via the shared oaw-sign-image action
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      tags: ${{ steps.meta.outputs.tags }}
+      version: ${{ steps.meta.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -103,22 +108,51 @@ jobs:
         with:
           digest-ref: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
 
+  # Copy publish's digest to Docker Hub and sign it there. Its own job, so a failure here
+  # (a cosign or Hub flake) is recovered with "Re-run failed jobs": that re-runs this job
+  # alone on publish's stored digest, the version tag already on it is skipped, and nothing
+  # is rebuilt. Re-running publish would rebuild a new digest (a rebuild never reproduces
+  # one) and move GHCR's version tag, which Hub then refuses. So once this job has pushed,
+  # never re-run publish: not by "Re-run all jobs", and not by re-running publish alone.
+  mirror:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+      id-token: write # keyless cosign (Fulcio/Rekor) via the shared oaw-sign-image action
+    outputs:
+      release_refs: ${{ steps.mirror.outputs.release-refs }}
+    steps:
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Log in to Docker Hub
-        # AFTER the build (see the note above): the OAT is only ever presented to docker.io
-        # for the oakandwave push it is scoped for. Serves both the mirror and Scout below.
+        # Only in this job, after the build (see the note in publish): the OAT is only ever
+        # presented to docker.io for the oakandwave push it is scoped for. Serves Scout too.
         uses: docker/login-action@v3
         with:
           username: oakandwave
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Mirror GHCR tags to Docker Hub oakandwave
-        # Registry migration (#18/#20): copy the just-pushed GHCR tags to docker.io/oakandwave.
-        # imagetools copies cross-registry using each registry's own creds (ghcr via the
-        # GHCR login, docker.io via the OAT) and rebuilds nothing.
-        env:
-          TAGS: ${{ steps.meta.outputs.tags }}
-        run: |
-          while IFS= read -r r; do [ -n "$r" ] && docker buildx imagetools create --tag "docker.io/oakandwave/flightdeck:${r##*:}" "$r"; done <<< "$TAGS"
+      - name: Mirror the GHCR digest to Docker Hub oakandwave
+        # Shared oaw-mirror-image action (claudecode-workflow#1326): copies the exact digest
+        # under every tag (ghcr via the GHCR login, docker.io via the OAT), but pushes a version
+        # tag (X.Y.Z) only when it is absent, and fails with nothing pushed if one already names
+        # another digest. Rebuilds nothing.
+        id: mirror
+        uses: wave-engineering/claudecode-workflow/.github/actions/oaw-mirror-image@d82d57ba3553ea5f82d3267f7c1e98d944a07a3a
+        with:
+          source-digest-ref: ${{ env.IMAGE }}@${{ needs.publish.outputs.digest }}
+          tags: ${{ needs.publish.outputs.tags }}
+          dest-image: docker.io/oakandwave/flightdeck
 
       - name: Sign the Docker Hub image (cosign keyless + SBOM)
         # The mirror copies the content-identical manifest, so the Docker Hub digest equals the
@@ -126,7 +160,7 @@ jobs:
         # own signature. The Docker Hub login above is active. Same shared action.
         uses: wave-engineering/claudecode-workflow/.github/actions/oaw-sign-image@21f10ce601b9340b30fd6df0b4a2e4bd663fe249
         with:
-          digest-ref: docker.io/oakandwave/flightdeck@${{ steps.build.outputs.digest }}
+          digest-ref: docker.io/oakandwave/flightdeck@${{ needs.publish.outputs.digest }}
 
       - name: Docker Scout — CVE scan the pushed image
         # Scans the actual image layers for known CVEs (complements trivy's dep scan).
@@ -139,6 +173,25 @@ jobs:
         uses: docker/scout-action@v1
         with:
           command: cves
-          image: docker.io/oakandwave/flightdeck:${{ steps.meta.outputs.version }}
+          image: docker.io/oakandwave/flightdeck:${{ needs.publish.outputs.version }}
           only-severities: critical,high
           write-comment: false
+
+  # Write the image's digest-pinned refs into the GitHub release. Its own job, after the
+  # mirror and both signatures, so a release-API failure can't stop a signature, and
+  # contents: write sits on a job that runs no registry or signing tooling.
+  release-notes:
+    needs: [publish, mirror]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Write the image digest into the release
+        # A tag with no release gets one (generated notes); a release published with its tag
+        # gets the Images block appended, or replaced on a rerun.
+        uses: wave-engineering/claudecode-workflow/.github/actions/oaw-release-images@d82d57ba3553ea5f82d3267f7c1e98d944a07a3a
+        with:
+          release-tag: ${{ github.ref_name }}
+          release-refs: ${{ needs.mirror.outputs.release_refs }}
+          source-digest-ref: ${{ env.IMAGE }}@${{ needs.publish.outputs.digest }}
+          create-if-missing: "true"
